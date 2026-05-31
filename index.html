@@ -259,7 +259,7 @@ async function loadSales(manual = false) {
       body: JSON.stringify({ prompt }),
     });
 
-    const raw = await res.text(); console.log('Function response:', raw);
+    const data = await res.json(); console.log('Function response:', raw);
 
     const data = await res.json();
     const text = (data.content || []).find(c => c.type === 'text')?.text || '';
