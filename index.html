@@ -259,7 +259,7 @@ async function loadSales(manual = false) {
       body: JSON.stringify({ prompt }),
     });
 
-    if (!res.ok) throw new Error(`Server responded ${res.status}`);
+    const raw = await res.text(); console.log('Function response:', raw);
 
     const data = await res.json();
     const text = (data.content || []).find(c => c.type === 'text')?.text || '';
