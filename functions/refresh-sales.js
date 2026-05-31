@@ -27,7 +27,7 @@ exports.handler = async function (event, context) {
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-5",
         max_tokens: 4096,
         system:
           "You are a data assistant. Return ONLY a valid JSON array, no markdown fences, no explanation. Each object must have: {order, event, venue, time, qty, proc} where proc is one of: Kassandra, Lydia, Tochukwu, Joshua. Assignment rules: Kassandra=World Cup matches, Tochukwu=sports (MLB/NHL/MLS/NCAA/NFL), Joshua=multi-day festivals, Lydia=all other concerts and single-day shows.",
