@@ -8,7 +8,7 @@
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f5f3;color:#1a1a1a;padding:24px;min-height:100vh}
-  .container{max-width:1100px;margin:0 auto}
+  .container{max-width:1200px;margin:0 auto}
   h1{font-size:22px;font-weight:500;margin-bottom:4px}
   .subtitle{font-size:13px;color:#666}
   .topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px}
@@ -16,8 +16,8 @@
   .btn:hover{background:#f0f0ee}
   .btn:active{transform:scale(0.98)}
   .btn:disabled{opacity:0.5;cursor:not-allowed}
-  .btn-group{display:flex;gap:8px}
-  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:20px}
+  .btn-group{display:flex;gap:8px;flex-wrap:wrap}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-bottom:20px}
   .stat{background:#fff;border-radius:8px;padding:12px 16px;border:1px solid #e8e8e6}
   .stat-label{font-size:12px;color:#888;margin-bottom:4px}
   .stat-val{font-size:22px;font-weight:500}
@@ -25,157 +25,63 @@
   .card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px}
   .card-title{font-size:14px;font-weight:500}
   .filters{display:flex;gap:6px;flex-wrap:wrap}
-  .filter-btn{background:#fff;border:1px solid #ddd;border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer;color:#666}
-  .filter-btn.active{background:#e8f4fd;color:#1a6fa8;border-color:#a8d4f0}
-  table{width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed}
-  th{font-size:11px;font-weight:500;color:#888;text-align:left;padding:6px 8px;border-bottom:1px solid #eee;white-space:nowrap}
-  td{padding:7px 8px;border-bottom:1px solid #f2f2f0;vertical-align:middle;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  tr:last-child td{border-bottom:none}
-  tr:hover td{background:#fafaf8}
-  .pill{display:inline-block;font-size:11px;font-weight:500;padding:2px 9px;border-radius:999px}
-  .status-bar{font-size:12px;color:#888;display:flex;align-items:center;gap:6px;margin-bottom:16px;min-height:20px}
-  .dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex-shrink:0}
-  .dot-green{background:#1D9E75}
-  .dot-amber{background:#BA7517}
-  .dot-red{background:#E24B4A}
-  .spinning{animation:spin 1s linear infinite}
-  @keyframes spin{to{transform:rotate(360deg)}}
-  .next-refresh{font-size:11px;color:#aaa;margin-left:auto}
-  .footer{text-align:center;font-size:11px;color:#aaa;margin-top:16px}
-  .error-banner{background:#fff3f3;border:1px solid #f5c6c6;border-radius:8px;padding:10px 14px;font-size:13px;color:#a32d2d;margin-bottom:16px;display:none}
-  @media(max-width:600px){body{padding:12px}.topbar{flex-direction:column;align-items:flex-start}}
-</style>
-</head>
-<body>
-<div class="container">
+  .filter-btn{background:#fff;border:1px solid #dd<script>
+const REFRESH_INTERVAL_MS = 60 * 60 * 1000;
 
-  <div class="topbar">
-    <div>
-      <h1>StubHub sales</h1>
-      <p class="subtitle" id="date-label"></p>
-    </div>
-    <div class="btn-group">
-      <button class="btn" onclick="exportCSV()"><i class="ti ti-download"></i> Export CSV</button>
-      <button class="btn" id="refresh-btn" onclick="loadSales(true)">
-        <i class="ti ti-refresh" id="refresh-icon"></i> Refresh
-      </button>
-    </div>
-  </div>
+const PROCESSORS = ['Kassandra','Lydia','Tochukwu','Joshua','Pearl','Enomfon','Lois','Marco','Christine'];
 
-  <div id="error-banner" class="error-banner"></div>
-  <div id="status-area" class="status-bar"></div>
-  <div class="stats" id="stats-row"></div>
-
-  <div class="card">
-    <div class="card-header">
-      <span class="card-title">Sales log</span>
-      <div class="filters" id="filter-btns"></div>
-    </div>
-    <div style="overflow-x:auto">
-      <table>
-        <thead>
-          <tr>
-            <th style="width:36px">#</th>
-            <th style="width:92px">Order</th>
-            <th>Event</th>
-            <th style="width:125px">Venue</th>
-            <th style="width:55px">Time</th>
-            <th style="width:32px;text-align:center">Qty</th>
-            <th style="width:94px">Processor</th>
-          </tr>
-        </thead>
-        <tbody id="sales-body"></tbody>
-      </table>
-    </div>
-  </div>
-
-  <p class="footer">Auto-refreshes every 5 hours &nbsp;·&nbsp; Pulls from Gmail "Sold StubHub Tickets" label</p>
-</div>
-
-<script>
-const REFRESH_INTERVAL_MS = 5 * 60 * 60 * 1000;
-
-const PROC_STYLES = {
-  Kassandra: {bg:'#FCE5CD', color:'#7A4A10'},
-  Lydia:     {bg:'#D9EAD3', color:'#2D6010'},
-  Tochukwu:  {bg:'#CFE2F3', color:'#0C447C'},
-  Joshua:    {bg:'#EAD1DC', color:'#72243E'},
-};
-
-const SEED_SALES = [
-  {n:1,  order:'644669375', event:'Ghana vs Panama - World Cup Group L',          venue:'BMO Field Lots, Toronto',             time:'18:27', qty:1, proc:'Kassandra'},
-  {n:2,  order:'644667525', event:'Governors Ball - Lorde, Baby Keem (Fri)',       venue:'Citi Field Lots, New York',           time:'18:06', qty:1, proc:'Lydia'},
-  {n:3,  order:'644667403', event:'Nate Bargatze',                                 venue:'Bridgestone Arena, Nashville',        time:'18:04', qty:1, proc:'Lydia'},
-  {n:4,  order:'644666833', event:'SF Giants at Chicago Cubs',                     venue:'Wrigley Field Lots, Chicago',         time:'17:57', qty:1, proc:'Tochukwu'},
-  {n:5,  order:'644666526', event:'Senegal vs Iraq - World Cup Group I',           venue:'MetLife Stadium Lots, NJ',            time:'17:53', qty:1, proc:'Kassandra'},
-  {n:6,  order:'644665599', event:'Lollapalooza - Charli XCX, Olivia Dean',        venue:'Grant Park Lots, Chicago',            time:'17:43', qty:1, proc:'Lydia'},
-  {n:7,  order:'644665402', event:'NCAA Baseball CWS - Game 9',                    venue:'C. Schwab Field, Omaha',              time:'17:41', qty:1, proc:'Tochukwu'},
-  {n:8,  order:'644664318', event:'Jelly Roll w/ Justin Moore & Ashley Cooke',     venue:'Utah First CU Amph., UT',            time:'17:29', qty:1, proc:'Lydia'},
-  {n:9,  order:'644663698', event:'Crankdat',                                       venue:'Palms Casino, Las Vegas',            time:'17:23', qty:1, proc:'Lydia'},
-  {n:10, order:'644662709', event:'Seattle Sounders at Austin FC',                 venue:'Q2 Stadium, Austin',                  time:'17:11', qty:1, proc:'Tochukwu'},
-  {n:11, order:'644662449', event:'Chris Stapleton',                               venue:'Fenway Park Lots, Boston',            time:'17:08', qty:1, proc:'Lydia'},
-  {n:12, order:'644662388', event:'Juneteenth for the People',                     venue:'Central Park, New York',              time:'17:08', qty:1, proc:'Lydia'},
-  {n:13, order:'644660724', event:'Tom Jones',                                     venue:'Hollywood Bowl, Los Angeles',         time:'16:49', qty:1, proc:'Lydia'},
-  {n:14, order:'644659618', event:'The Strokes',                                   venue:'Autonomy Amph., Chicago',             time:'16:36', qty:1, proc:'Lydia'},
-  {n:15, order:'644656470', event:'Carolina Country Music Fest (Thu)',             venue:'Burroughs Pavilion, Myrtle Beach',    time:'16:00', qty:1, proc:'Lydia'},
-  {n:16, order:'644653733', event:'Bourbon & Beyond - Foo Fighters (Thu)',         venue:'Highland Grounds, Louisville',        time:'15:26', qty:1, proc:'Lydia'},
-  {n:17, order:'644651683', event:'Vegas GK at Carolina Hurricanes - SCF',         venue:'PNC Arena, Raleigh',                  time:'15:00', qty:1, proc:'Tochukwu'},
-  {n:18, order:'644651643', event:'Colorado Springs Switchbacks vs El Paso',       venue:'Weidner Field, Colorado Springs',     time:'14:59', qty:1, proc:'Tochukwu'},
-  {n:19, order:'644650839', event:'US Open Tennis - Session 13',                   venue:'USTA BJK, New York',                  time:'14:49', qty:2, proc:'Tochukwu'},
-  {n:20, order:'644649167', event:'Jelly Roll',                                    venue:'Dos Equis Pavilion, Dallas',          time:'14:23', qty:1, proc:'Lydia'},
-  {n:21, order:'644648738', event:'Brandi Carlile',                                venue:'SPAC, Saratoga Springs',              time:'14:18', qty:1, proc:'Lydia'},
-  {n:22, order:'644645671', event:'Motionless In White',                           venue:'Riverbend Music Ctr, Cincinnati',     time:'13:25', qty:1, proc:'Lydia'},
-  {n:23, order:'644645620', event:'Dylan Gossett & Charles Wesley Godwin',         venue:'Ryman Auditorium, Nashville',         time:'13:23', qty:1, proc:'Lydia'},
-  {n:24, order:'644644507', event:'Haiti vs Scotland - World Cup Group C',         venue:"AT&T Stadium, Arlington",             time:'12:59', qty:1, proc:'Kassandra'},
-  {n:25, order:'644644312', event:'USC Trojans at Wisconsin Badgers',              venue:'Camp Randall, Madison',               time:'12:55', qty:1, proc:'Tochukwu'},
-  {n:26, order:'644643765', event:'Toronto Blue Jays at Chicago Cubs',             venue:'Wrigley Field Lots, Chicago',         time:'12:42', qty:1, proc:'Tochukwu'},
-  {n:27, order:'644642122', event:'Newport Folk Fest - Gillian Welch (2-Day)',     venue:'Fort Adams, Newport',                 time:'11:56', qty:1, proc:'Joshua'},
-  {n:28, order:'644640036', event:'Ye',                                            venue:'MetLife Stadium, NJ',                 time:'10:33', qty:1, proc:'Joshua'},
-  {n:29, order:'644639990', event:'Switzerland vs Canada - World Cup Group B',    venue:"Levi's Stadium, Santa Clara",         time:'10:31', qty:1, proc:'Kassandra'},
-  {n:30, order:'644639397', event:'Pitbull with Lil Jon',                          venue:'iTHINK Amph., West Palm Beach',       time:'09:57', qty:1, proc:'Lydia'},
-  {n:31, order:'644638635', event:'USC Trojans at Wisconsin Badgers',              venue:'Camp Randall, Madison',               time:'09:11', qty:1, proc:'Tochukwu'},
-  {n:32, order:'644638435', event:'Hampton Jazz & Music Fest (Fri, 2 tkts)',       venue:'Hampton Coliseum, Hampton',           time:'08:59', qty:2, proc:'Joshua'},
-  {n:33, order:'644637648', event:'Deorro',                                        venue:'SOMA, San Diego',                     time:'08:04', qty:1, proc:'Lydia'},
-  {n:34, order:'644637592', event:'Wooden Wisdom',                                 venue:'Red Rocks, Morrison',                 time:'07:59', qty:1, proc:'Joshua'},
-  {n:35, order:'644637454', event:'Wooden Wisdom (2 tkts)',                        venue:'Red Rocks, Morrison',                 time:'07:50', qty:2, proc:'Joshua'},
-  {n:36, order:'644637047', event:'Kehlani',                                       venue:'Radius Chicago, Chicago',             time:'07:26', qty:1, proc:'Lydia'},
-  {n:37, order:'644636413', event:'President',                                     venue:'Wiltern, Los Angeles',                time:'06:54', qty:1, proc:'Lydia'},
-  {n:38, order:'644636116', event:'Kottonmouth Kings',                             venue:'House of Blues, Las Vegas',           time:'06:38', qty:1, proc:'Lydia'},
-  {n:39, order:'644635691', event:'Band of Horses',                                venue:'Paramount Theatre, Seattle',          time:'06:16', qty:1, proc:'Lydia'},
-  {n:40, order:'644635257', event:'Shinedown',                                     venue:'Ford Idaho Ctr, Nampa',               time:'06:02', qty:1, proc:'Lydia'},
-  {n:41, order:'644635047', event:'PJ Morton',                                     venue:'Orpheum Theater, New Orleans',        time:'05:51', qty:1, proc:'Lydia'},
-  {n:42, order:'644634997', event:'Gryffin',                                       venue:'Hayden Homes Amph., Bend',            time:'05:50', qty:1, proc:'Lydia'},
-  {n:43, order:'644634063', event:'SYML',                                          venue:'Neptune Theater, Seattle',            time:'05:18', qty:1, proc:'Lydia'},
-  {n:44, order:'644633680', event:'Dominic Fike',                                  venue:'Pier 17, New York',                   time:'05:08', qty:1, proc:'Lydia'},
-  {n:45, order:'644633636', event:'Vegas GK at Carolina Hurricanes - SCF',         venue:'PNC Arena, Raleigh',                  time:'05:07', qty:1, proc:'Tochukwu'},
-  {n:46, order:'644633171', event:'Kes',                                           venue:'Hard Rock Live, Hollywood FL',        time:'04:53', qty:1, proc:'Lydia'},
-  {n:47, order:'644633143', event:'Wooden Wisdom',                                 venue:'Red Rocks, Morrison',                 time:'04:52', qty:1, proc:'Joshua'},
-  {n:48, order:'644631765', event:'Boston Red Sox at New York Yankees',            venue:'Yankee Stadium, Bronx',               time:'04:17', qty:1, proc:'Tochukwu'},
-  {n:49, order:'644632115', event:'Morgan Wallen',                                 venue:'Nissan Stadium, Nashville',           time:'04:25', qty:1, proc:'Lydia'},
-  {n:50, order:'644630437', event:'Noah Kahan',                                    venue:'Dos Equis Pavilion, Dallas',          time:'03:50', qty:1, proc:'Lydia'},
+const PROC_COLORS = [
+  {bg:'#FCE5CD',color:'#7A4A10'},
+  {bg:'#D9EAD3',color:'#2D6010'},
+  {bg:'#CFE2F3',color:'#0C447C'},
+  {bg:'#EAD1DC',color:'#72243E'},
+  {bg:'#E8D5F5',color:'#5B2D8C'},
+  {bg:'#D5EEF5',color:'#0A5C72'},
+  {bg:'#F5E6D5',color:'#7A4A10'},
+  {bg:'#D5F5E3',color:'#1A6B3C'},
+  {bg:'#F5D5D5',color:'#8C1A1A'},
 ];
 
+const PROC_STYLE_MAP = {};
+PROCESSORS.forEach((p,i) => { PROC_STYLE_MAP[p] = PROC_COLORS[i]; });
+
+const SEED_SALES = [
+  {n:1,  order:'644669375', event:'Ghana vs Panama - World Cup Group L',          venue:'BMO Field Lots, Toronto',          time:'18:27', qty:1},
+  {n:2,  order:'644667525', event:'Governors Ball - Lorde, Baby Keem (Fri)',       venue:'Citi Field Lots, New York',        time:'18:06', qty:1},
+  {n:3,  order:'644667403', event:'Nate Bargatze',                                 venue:'Bridgestone Arena, Nashville',    time:'18:04', qty:1},
+  {n:4,  order:'644666833', event:'SF Giants at Chicago Cubs',                     venue:'Wrigley Field Lots, Chicago',     time:'17:57', qty:1},
+  {n:5,  order:'644666526', event:'Senegal vs Iraq - World Cup Group I',           venue:'MetLife Stadium Lfunction assignEqually(sales) {
+  return sales.map((s, i) => ({ ...s, proc: PROCESSORS[i % PROCESSORS.length] }));
+}
+
 let currentFilter = 'All';
-let allSales = [...SEED_SALES];
+let allSales = assignEqually(SEED_SALES.map(s => ({...s})));
+let processedOrders = JSON.parse(localStorage.getItem('processedOrders') || '[]');
 let refreshTimer = null;
-let nextRefreshAt = null;
-let countdownTimer = null;
+let progressTimer = null;
+
+function saveProcessed() {
+  try { localStorage.setItem('processedOrders', JSON.stringify(processedOrders)); } catch(e) {}
+}
 
 function procStyle(proc) {
-  const s = PROC_STYLES[proc] || {bg:'#eee', color:'#555'};
+  const s = PROC_STYLE_MAP[proc] || {bg:'#eee', color:'#555'};
   return `background:${s.bg};color:${s.color}`;
 }
 
 function renderStats(data) {
   const total = data.length;
   const tickets = data.reduce((a, r) => a + r.qty, 0);
+  const processed = data.filter(r => processedOrders.includes(r.order)).length;
   let html = `
     <div class="stat"><div class="stat-label">Total orders</div><div class="stat-val">${total}</div></div>
     <div class="stat"><div class="stat-label">Total tickets</div><div class="stat-val">${tickets}</div></div>
+    <div class="stat" style="border-left:3px solid #1D9E75"><div class="stat-label">Processed</div><div class="stat-val">${processed}</div></div>
+    <div class="stat" style="border-left:3px solid #BA7517"><div class="stat-label">Pending</div><div class="stat-val">${total - processed}</div></div>
   `;
-  ['Kassandra','Lydia','Tochukwu','Joshua'].forEach(p => {
+  PROCESSORS.forEach(p => {
     const n = data.filter(r => r.proc === p).length;
-    const s = PROC_STYLES[p];
+    const s = PROC_STYLE_MAP[p];
     html += `<div class="stat" style="border-left:3px solid ${s.bg}">
       <div class="stat-label">${p}</div><div class="stat-val">${n}</div>
     </div>`;
@@ -185,61 +91,77 @@ function renderStats(data) {
 
 function renderFilters() {
   document.getElementById('filter-btns').innerHTML =
-    ['All','Kassandra','Lydia','Tochukwu','Joshua'].map(p =>
+    ['All', ...PROCESSORS].map(p =>
       `<button class="filter-btn${currentFilter === p ? ' active' : ''}" onclick="setFilter('${p}')">${p}</button>`
     ).join('');
 }
 
 function setFilter(p) { currentFilter = p; renderFilters(); renderTable(); }
 
+function toggleProcessed(order) {
+  if (processedOrders.includes(order)) {
+    processedOrders = processedOrders.filter(o => o !== order);
+  } else {
+    processedOrders.push(order);
+  }
+  saveProcessed();
+  renderStats(allSales);
+  renderTable();
+}
+
+function clearProcessed() {
+  if (!confirm('Clear all processed checkboxes?')) return;
+  processedOrders = [];
+  saveProcessed();
+  renderStats(allSales);
+  renderTable();
+}
+
 function renderTable() {
   const data = currentFilter === 'All' ? allSales : allSales.filter(r => r.proc === currentFilter);
   const tbody = document.getElementById('sales-body');
   if (!data.length) {
-    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:24px;color:#aaa">No sales found</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:24px;color:#aaa">No sales found</td></tr>';
     return;
   }
-  tbody.innerHTML = data.map(r => `
-    <tr>
+  tbody.innerHTML = data.map(r => {
+    const done = processedOrders.includes(r.order);
+    return `<tr class="${done ? 'processed' : ''}">
+      <td style="text-align:center"><input type="checkbox" ${done ? 'checked' : ''} onchange="toggleProcessed('${r.order}')"></td>
       <td style="color:#bbb">${r.n}</td>
       <td style="font-family:monospace;font-size:12px">${r.order}</td>
-      <td title="${r.event}">${r.event}</td>
+      <td title="${r.event}">${r.event}${done ? '<span class="done-badge">done</span>' : ''}</td>
       <td title="${r.venue}" style="color:#888;font-size:12px">${r.venue}</td>
       <td style="color:#888">${r.time}</td>
       <td style="text-align:center">${r.qty}</td>
       <td><span class="pill" style="${procStyle(r.proc)}">${r.proc}</span></td>
-    </tr>
-  `).join('');
+    </tr>`;
+  }).join('');
 }
 
-function setStatus(type, msg) {
-  const dotClass = {ok:'dot-green', warn:'dot-amber', err:'dot-red', loading:'dot-amber'}[type] || 'dot-amber';
+function setStatus(type, msg, countdown) {
+  const dotClass = {ok:'dot-green',warn:'dot-amber',err:'dot-red',loading:'dot-amber'}[type]||'dot-amber';
   const spinClass = type === 'loading' ? ' spinning' : '';
   document.getElementById('status-area').innerHTML =
-    `<span class="dot ${dotClass}${spinClass}"></span><span>${msg}</span>`;
+    `<span class="dot ${dotClass}${spinClass}"></span><span>${msg}</span>${countdown ? `<span class="next-refresh" id="countdown">${countdown}</span>` : ''}`;
 }
 
-function showError(msg) {
-  const el = document.getElementById('error-banner');
-  el.textContent = msg;
-  el.style.display = 'block';
-  setTimeout(() => { el.style.display = 'none'; }, 8000);
-}
-
-function startCountdown() {
-  clearInterval(countdownTimer);
-  nextRefreshAt = Date.now() + REFRESH_INTERVAL_MS;
-  countdownTimer = setInterval(() => {
-    const remaining = nextRefreshAt - Date.now();
-    if (remaining <= 0) { clearInterval(countdownTimer); return; }
-    const h = Math.floor(remaining / 3600000);
-    const m = Math.floor((remaining % 3600000) / 60000);
+function startProgressBar() {
+  clearInterval(progressTimer);
+  const start = Date.now();
+  progressTimer = setInterval(() => {
+    const elapsed = Date.now() - start;
+    const pct = Math.max(0, 100 - (elapsed / REFRESH_INTERVAL_MS) * 100);
+    const fill = document.getElementById('progress-fill');
+    if (fill) {
+      fill.style.width = pct + '%';
+      fill.style.background = pct > 50 ? '#1D9E75' : pct > 20 ? '#BA7517' : '#E24B4A';
+    }
+    const remaining = REFRESH_INTERVAL_MS - elapsed;
+    const m = Math.floor(remaining / 60000);
     const s = Math.floor((remaining % 60000) / 1000);
-    const pad = n => String(n).padStart(2,'0');
-    const timeStr = h > 0 ? `${h}h ${pad(m)}m` : `${pad(m)}m ${pad(s)}s`;
-    const existingStatus = document.getElementById('status-area');
-    const countdownEl = document.getElementById('countdown');
-    if (countdownEl) countdownEl.textContent = `Next refresh in ${timeStr}`;
+    const el = document.getElementById('countdown');
+    if (el) el.textContent = `Next refresh in ${m}m ${String(s).padStart(2,'0')}s`;
   }, 1000);
 }
 
@@ -248,10 +170,10 @@ async function loadSales(manual = false) {
   const icon = document.getElementById('refresh-icon');
   btn.disabled = true;
   icon.classList.add('spinning');
-  setStatus('loading', 'Fetching latest sales from Gmail…');
+  setStatus('loading', 'Fetching latest sales from Gmail...');
 
   try {
-    const prompt = `Today is ${new Date().toDateString()}. Here are the current StubHub sales. Return them as a JSON array with venue and processor assignments. Data: ${JSON.stringify(SEED_SALES.map(s => ({order: s.order, event: s.event, venue: s.venue, qty: s.qty})))}`;
+    const prompt = `Today is ${new Date().toDateString()}. Assign these ${allSales.length} StubHub sales equally across 9 processors in order: ${PROCESSORS.join(', ')}. Sale 1 goes to ${PROCESSORS[0]}, sale 2 to ${PROCESSORS[1]}, cycling through all 9. Return ONLY a JSON array with fields: {order, event, venue, time, qty, proc}. Data: ${JSON.stringify(allSales.map(s => ({order:s.order,event:s.event,venue:s.venue,qty:s.qty})))}`;
 
     const res = await fetch('/.netlify/functions/refresh-sales', {
       method: 'POST',
@@ -259,10 +181,11 @@ async function loadSales(manual = false) {
       body: JSON.stringify({ prompt }),
     });
 
-    const data = await res.json(); console.log('Function response:', raw);
-
-    const data = await res.json();
-    const text = (data.content || []).find(c => c.type === 'text')?.text || '';
+    const responseText = await res.text();
+    const data = JSON.parse(responseText);
+    const content = data.content || [];
+    const textBlock = content.find(c => c.type === 'text');
+    const text = textBlock ? textBlock.text : '';
     const clean = text.replace(/```json|```/g, '').trim();
     const parsed = JSON.parse(clean);
 
@@ -270,32 +193,28 @@ async function loadSales(manual = false) {
       allSales = parsed.map((r, i) => ({ ...SEED_SALES[i], ...r, n: i + 1 }));
     }
 
-    const now = new Date();
-    document.getElementById('status-area').innerHTML = `
-      <span class="dot dot-green"></span>
-      <span>Refreshed at ${now.toLocaleTimeString()} · ${allSales.length} orders</span>
-      <span class="next-refresh" id="countdown">Next refresh in 5h 00m</span>
-    `;
-    startCountdown();
+    setStatus('ok', `Refreshed at ${new Date().toLocaleTimeString()} · ${allSales.length} orders`, 'Next refresh in 60m 00s');
+    startProgressBar();
 
   } catch (err) {
-    allSales = [...SEED_SALES];
+    allSales = assignEqually(SEED_SALES.map(s => ({...s})));
     setStatus('warn', 'Could not refresh — showing cached data');
-    if (manual) showError(`Refresh failed: ${err.message}. Check that your ANTHROPIC_API_KEY environment variable is set in Netlify.`);
   }
 
   renderStats(allSales);
   renderTable();
   btn.disabled = false;
   icon.classList.remove('spinning');
-
   clearTimeout(refreshTimer);
   refreshTimer = setTimeout(() => loadSales(false), REFRESH_INTERVAL_MS);
 }
 
 function exportCSV() {
-  const headers = ['#','Order','Event','Venue','Time (UTC)','Qty','Processor'];
-  const rows = allSales.map(r => [r.n, r.order, `"${r.event}"`, `"${r.venue}"`, r.time, r.qty, r.proc]);
+  const headers = ['#','Order','Event','Venue','Time (UTC)','Qty','Processor','Processed'];
+  const rows = allSales.map(r => [
+    r.n, r.order, `"${r.event}"`, `"${r.venue}"`, r.time, r.qty, r.proc,
+    processedOrders.includes(r.order) ? 'Yes' : 'No'
+  ]);
   const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
@@ -303,13 +222,11 @@ function exportCSV() {
   a.click();
 }
 
-document.getElementById('date-label').textContent = new Date().toLocaleDateString('en-US', {
-  weekday:'long', year:'numeric', month:'long', day:'numeric'
-});
+document.getElementById('date-label').textContent = new Date().toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
 renderFilters();
-renderStats(SEED_SALES);
+renderStats(allSales);
 renderTable();
-setStatus('ok', `${SEED_SALES.length} orders loaded from May 31, 2026 · Click Refresh to pull latest`);
+setStatus('ok', `${allSales.length} orders loaded · Click Refresh to pull latest`, 'Auto-refreshes every hour');
 refreshTimer = setTimeout(() => loadSales(false), REFRESH_INTERVAL_MS);
 </script>
 </body>
