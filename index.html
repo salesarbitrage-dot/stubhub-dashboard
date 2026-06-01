@@ -50,7 +50,8 @@ const SEED_SALES = [
   {n:2,  order:'644667525', event:'Governors Ball - Lorde, Baby Keem (Fri)',       venue:'Citi Field Lots, New York',        time:'18:06', qty:1},
   {n:3,  order:'644667403', event:'Nate Bargatze',                                 venue:'Bridgestone Arena, Nashville',    time:'18:04', qty:1},
   {n:4,  order:'644666833', event:'SF Giants at Chicago Cubs',                     venue:'Wrigley Field Lots, Chicago',     time:'17:57', qty:1},
-  {n:5,  order:'644666526', event:'Senegal vs Iraq - World Cup Group I',           venue:'MetLife Stadium Lfunction assignEqually(sales) {
+  {n:5,  order:'644666526', event:'Senegal vs Iraq - World Cup Group I',           venue:'MetLife Stadium <script>
+function assignEqually(sales) {
   return sales.map((s, i) => ({ ...s, proc: PROCESSORS[i % PROCESSORS.length] }));
 }
 
