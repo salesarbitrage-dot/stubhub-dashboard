@@ -57,7 +57,6 @@
   .accept-btn:disabled{opacity:0.5;cursor:not-allowed}
   .accepted-badge{display:inline-block;font-size:10px;background:#1D9E75;color:#fff;padding:2px 8px;border-radius:4px;font-weight:500}
   .import-banner{background:#fff;border-radius:8px;border:1px solid #e8e8e6;padding:10px 16px;margin-bottom:16px;font-size:12px;color:#666;display:flex;align-items:center;gap:8px}
-  .import-banner i{color:#1D9E75;font-size:14px}
   .import-time{font-weight:500;color:#1a1a1a}
   #csv-input{display:none}
   @media(max-width:600px){body{padding:12px}.topbar{flex-direction:column;align-items:flex-start}}
@@ -79,7 +78,7 @@
     </div>
   </div>
   <div id="import-banner" class="import-banner" style="display:none">
-    <i class="ti ti-clock"></i>
+    <i class="ti ti-clock" style="color:#1D9E75;font-size:14px" aria-hidden="true"></i>
     <span>Last import: <span class="import-time" id="import-timestamp">—</span> &nbsp;·&nbsp; <span id="import-count"></span> orders loaded &nbsp;·&nbsp; Next import should cover sales after <span class="import-time" id="import-next-from">—</span></span>
   </div>
   <div id="schedule-banner" class="schedule-info"></div>
@@ -197,34 +196,26 @@ function procStyle(proc) {
   const s = PROC_COLORS[proc] || {bg:'#eee',color:'#555'};
   return `background:${s.bg};color:${s.color}`;
 }
+function formatChicagoTime(date) {
+  return date.toLocaleString('en-US', {
+    timeZone: 'America/Chicago',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true
+  }) + ' Chicago time';
+}
 function updateImportBanner(count) {
   lastImportTime = new Date();
   const banner = document.getElementById('import-banner');
   const ts = document.getElementById('import-timestamp');
   const cnt = document.getElementById('import-count');
   const nextFrom = document.getElementById('import-next-from');
-  const chicagoTime = lastImportTime.toLocaleString('en-US', {
-    timeZone: 'America/Chicago',
-    month: 'short', day: 'numeric',
-    hour: 'numeric', minute: '2-digit',
-    hour12: true
-  });
-  let nextFromStr = '—';
-  if (allSales.length > 0) {
-    const times = allSales.map(s => s.time).filter(t => t).sort().reverse();
-    if (times[0]) {
-      const today = new Date().toISOString().slice(0, 10);
-      const utcDate = new Date(`${today}T${times[0]}:00Z`);
-      nextFromStr = utcDate.toLocaleString('en-US', {
-        timeZone: 'America/Chicago',
-        hour: 'numeric', minute: '2-digit',
-        hour12: true
-      }) + ' Chicago time';
-    }
-  }
-  ts.textContent = chicagoTime + ' Chicago time';
+  const timeStr = formatChicagoTime(lastImportTime);
+  ts.textContent = timeStr;
   cnt.textContent = count;
-  nextFrom.textContent = nextFromStr;
+  nextFrom.textContent = timeStr;
   banner.style.display = 'flex';
 }
 function renderScheduleBanner() {
