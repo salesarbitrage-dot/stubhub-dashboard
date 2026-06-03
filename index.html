@@ -203,33 +203,24 @@ function updateImportBanner(count) {
   const ts = document.getElementById('import-timestamp');
   const cnt = document.getElementById('import-count');
   const nextFrom = document.getElementById('import-next-from');
-  // Format time as Chicago time
   const chicagoTime = lastImportTime.toLocaleString('en-US', {
     timeZone: 'America/Chicago',
     month: 'short', day: 'numeric',
     hour: 'numeric', minute: '2-digit',
     hour12: true
   });
-  // The latest sale time in the import
-  let latestSaleTime = null;
-  if (allSales.length > 0) {
-    const times = allSales
-      .map(s => s.time)
-      .filter(t => t)
-      .sort()
-      .reverse();
-    latestSaleTime = times[0] || null;
-  }
-  // Convert latest UTC sale time to Chicago time for "next import from"
   let nextFromStr = '—';
-  if (latestSaleTime) {
-    const today = new Date().toISOString().slice(0, 10);
-    const utcDate = new Date(`${today}T${latestSaleTime}:00Z`);
-    nextFromStr = utcDate.toLocaleString('en-US', {
-      timeZone: 'America/Chicago',
-      hour: 'numeric', minute: '2-digit',
-      hour12: true
-    }) + ' Chicago time';
+  if (allSales.length > 0) {
+    const times = allSales.map(s => s.time).filter(t => t).sort().reverse();
+    if (times[0]) {
+      const today = new Date().toISOString().slice(0, 10);
+      const utcDate = new Date(`${today}T${times[0]}:00Z`);
+      nextFromStr = utcDate.toLocaleString('en-US', {
+        timeZone: 'America/Chicago',
+        hour: 'numeric', minute: '2-digit',
+        hour12: true
+      }) + ' Chicago time';
+    }
   }
   ts.textContent = chicagoTime + ' Chicago time';
   cnt.textContent = count;
