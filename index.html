@@ -70,12 +70,10 @@
       <button class="btn" id="refresh-btn" onclick="loadSales(true)"><i class="ti ti-refresh" id="refresh-icon"></i> Refresh</button>
     </div>
   </div>
-
   <div id="schedule-banner" class="schedule-info"></div>
   <div class="progress-bar"><div class="progress-fill" id="progress-fill" style="width:100%"></div></div>
   <div id="status-area" class="status-bar"></div>
   <div class="stats" id="stats-row"></div>
-
   <div class="card">
     <div class="card-header">
       <span class="card-title">Sales log</span>
@@ -101,10 +99,8 @@
   </div>
   <p class="footer">Auto-refreshes every hour · Import a CSV to update sales · Assignments based on work schedules</p>
 </div>
-
 <script>
 const REFRESH_INTERVAL_MS = 60 * 60 * 1000;
-
 const SCHEDULES = {
   'Enomfon':   ['Monday','Tuesday','Thursday','Friday','Saturday'],
   'Christine': ['Monday','Tuesday','Wednesday','Thursday','Saturday'],
@@ -116,11 +112,9 @@ const SCHEDULES = {
   'Lydia':     ['Monday','Tuesday','Wednesday','Thursday','Sunday'],
   'Pearl':     ['Tuesday','Wednesday','Thursday','Friday','Saturday'],
 };
-
 const ALL_PROCESSORS = ['Kassandra','Lydia','Tochukwu','Joshua','Pearl','Enomfon','Lois','Marco','Christine'];
 const PRIORITY_DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday'];
 const PRIORITY_MEMBERS = ['Joshua','Christine'];
-
 const PROC_COLORS = {
   'Kassandra': {bg:'#FCE5CD',color:'#7A4A10'},
   'Lydia':     {bg:'#D9EAD3',color:'#2D6010'},
@@ -132,11 +126,9 @@ const PROC_COLORS = {
   'Marco':     {bg:'#D5F5E3',color:'#1A6B3C'},
   'Christine': {bg:'#F5D5D5',color:'#8C1A1A'},
 };
-
 function getDayName(date) {
   return ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][date.getDay()];
 }
-
 function getWorkingToday() {
   const day = getDayName(new Date());
   return {
@@ -145,21 +137,17 @@ function getWorkingToday() {
     off: ALL_PROCESSORS.filter(p => !SCHEDULES[p].includes(day)),
   };
 }
-
 function parseEventDate(dateStr) {
   if (!dateStr) return null;
   const d = new Date(dateStr);
   return isNaN(d.getTime()) ? null : d;
 }
-
 function assignSales(sales) {
   const { day, working } = getWorkingToday();
   if (!working.length) return sales.map((s,i) => ({...s, n:i+1, proc:'Unassigned'}));
-
   const priorityActive = PRIORITY_DAYS.includes(day);
   const priorityWorkers = PRIORITY_MEMBERS.filter(p => working.includes(p));
   const otherWorkers = working.filter(p => !PRIORITY_MEMBERS.includes(p));
-
   const sorted = [...sales].sort((a,b) => {
     const da = parseEventDate(a.event_date);
     const db = parseEventDate(b.event_date);
@@ -168,17 +156,13 @@ function assignSales(sales) {
     if (!db) return -1;
     return da - db;
   });
-
   let result = [];
-
   if (priorityActive && priorityWorkers.length) {
     const total = sorted.length;
     const priorityCount = Math.round(total * priorityWorkers.length / working.length);
     const prioritySales = sorted.slice(0, priorityCount);
     const otherSales = sorted.slice(priorityCount);
-
     prioritySales.forEach((s,i) => result.push({...s, proc: priorityWorkers[i % priorityWorkers.length]}));
-
     if (otherWorkers.length) {
       otherSales.forEach((s,i) => result.push({...s, proc: otherWorkers[i % otherWorkers.length]}));
     } else {
@@ -187,30 +171,21 @@ function assignSales(sales) {
   } else {
     sorted.forEach((s,i) => result.push({...s, proc: working[i % working.length]}));
   }
-
   return result.map((s,i) => ({...s, n:i+1}));
 }
-
 let currentFilter = 'All';
 let allSales = [];
-let processedOrders = JSON.parse(localStorage.getItem('processedOrders') || '[]');
+let processedOrders = [];
 let refreshTimer = null;
 let progressTimer = null;
-
-function saveProcessed() {
-  try { localStorage.setItem('processedOrders', JSON.stringify(processedOrders)); } catch(e) {}
-}
-
 function procStyle(proc) {
   const s = PROC_COLORS[proc] || {bg:'#eee',color:'#555'};
   return `background:${s.bg};color:${s.color}`;
 }
-
 function renderScheduleBanner() {
   const { day, working, off } = getWorkingToday();
   const priorityActive = PRIORITY_DAYS.includes(day);
   const priorityWorkers = PRIORITY_MEMBERS.filter(p => working.includes(p));
-
   let html = `<strong>Today is ${day}.</strong> &nbsp;`;
   html += `Working: ` + working.map(p => `<span class="on-badge">${p}</span>`).join(' ');
   if (off.length) html += ` &nbsp; Off: ` + off.map(p => `<span class="off-badge">${p}</span>`).join(' ');
@@ -219,13 +194,11 @@ function renderScheduleBanner() {
   }
   document.getElementById('schedule-banner').innerHTML = html;
 }
-
 function renderStats(data) {
   const total = data.length;
   const tickets = data.reduce((a,r) => a + (r.qty||1), 0);
   const processed = data.filter(r => processedOrders.includes(r.order)).length;
   const { working } = getWorkingToday();
-
   let html = `
     <div class="stat"><div class="stat-label">Total orders</div><div class="stat-val">${total}</div></div>
     <div class="stat"><div class="stat-label">Total tickets</div><div class="stat-val">${tickets}</div></div>
@@ -239,7 +212,6 @@ function renderStats(data) {
   });
   document.getElementById('stats-row').innerHTML = html;
 }
-
 function renderFilters() {
   const { working } = getWorkingToday();
   document.getElementById('filter-btns').innerHTML =
@@ -247,33 +219,26 @@ function renderFilters() {
       `<button class="filter-btn${currentFilter===p?' active':''}" onclick="setFilter('${p}')">${p}</button>`
     ).join('');
 }
-
 function setFilter(p) { currentFilter=p; renderFilters(); renderTable(); }
-
 function toggleProcessed(order) {
   if (processedOrders.includes(order)) {
     processedOrders = processedOrders.filter(o => o !== order);
   } else {
     processedOrders.push(order);
   }
-  saveProcessed();
   renderStats(allSales);
   renderTable();
 }
-
 function clearProcessed() {
   if (!confirm('Clear all processed checkboxes?')) return;
   processedOrders = [];
-  saveProcessed();
   renderStats(allSales);
   renderTable();
 }
-
 function renderTable() {
   const { working } = getWorkingToday();
   const priorityActive = PRIORITY_DAYS.includes(getDayName(new Date()));
   const priorityWorkers = PRIORITY_MEMBERS.filter(p => working.includes(p));
-
   const data = currentFilter==='All' ? allSales : allSales.filter(r => r.proc===currentFilter);
   const tbody = document.getElementById('sales-body');
   if (!data.length) {
@@ -295,14 +260,12 @@ function renderTable() {
     </tr>`;
   }).join('');
 }
-
 function setStatus(type, msg, countdown) {
   const dotClass = {ok:'dot-green',warn:'dot-amber',err:'dot-red',loading:'dot-amber'}[type]||'dot-amber';
   const spinClass = type==='loading'?' spinning':'';
   document.getElementById('status-area').innerHTML =
     `<span class="dot ${dotClass}${spinClass}"></span><span>${msg}</span>${countdown?`<span class="next-refresh" id="countdown">${countdown}</span>`:''}`;
 }
-
 function startProgressBar() {
   clearInterval(progressTimer);
   const start = Date.now();
@@ -321,7 +284,6 @@ function startProgressBar() {
     if (el) el.textContent = `Next refresh in ${m}m ${String(s).padStart(2,'0')}s`;
   }, 1000);
 }
-
 function importCSV(event) {
   const file = event.target.files[0];
   if (!file) return;
@@ -343,12 +305,10 @@ function importCSV(event) {
       const timeIdx      = idx(['time']);
       const qtyIdx       = idx(['qty','ticket','quantity']);
       const doneIdx      = idx(['processed','done']);
-
       if (orderIdx === -1 || eventIdx === -1) {
         alert('CSV must have Order and Event columns.');
         return;
       }
-
       const rawSales = [];
       for (let i = 1; i < lines.length; i++) {
         const cols = lines[i].match(/(".*?"|[^,]+)(?=,|$)/g) || lines[i].split(',');
@@ -365,11 +325,8 @@ function importCSV(event) {
           if (!processedOrders.includes(clean[orderIdx])) processedOrders.push(clean[orderIdx]);
         }
       }
-
       if (!rawSales.length) { alert('No sales found in CSV.'); return; }
-
       allSales = assignSales(rawSales);
-      saveProcessed();
       renderScheduleBanner();
       renderStats(allSales);
       renderFilters();
@@ -382,32 +339,27 @@ function importCSV(event) {
   };
   reader.readAsText(file);
 }
-
 async function loadSales(manual=false) {
   const btn = document.getElementById('refresh-btn');
   const icon = document.getElementById('refresh-icon');
   btn.disabled = true;
   icon.classList.add('spinning');
   setStatus('loading','Fetching latest sales from Gmail...');
-
   try {
     const { working } = getWorkingToday();
     const day = getDayName(new Date());
     const priorityActive = PRIORITY_DAYS.includes(day);
     const priorityWorkers = PRIORITY_MEMBERS.filter(p => working.includes(p));
-
     const prompt = `Today is ${new Date().toDateString()} (${day}).
 Working today: ${working.join(', ')}.
 ${priorityActive && priorityWorkers.length ? `Priority workers (get sales with soonest event dates): ${priorityWorkers.join(', ')}.` : ''}
 Reassign these StubHub sales based on today's schedule. Sort by event_date ascending, assign soonest events to priority workers first, then distribute rest equally. Return ONLY a JSON array with fields: {order, event, event_date, time, qty, proc}.
 Data: ${JSON.stringify(allSales.map(s => ({order:s.order,event:s.event,event_date:s.event_date,qty:s.qty})))}`;
-
     const res = await fetch('/.netlify/functions/refresh-sales', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({prompt}),
     });
-
     const responseText = await res.text();
     const data = JSON.parse(responseText);
     const content = data.content || [];
@@ -415,17 +367,14 @@ Data: ${JSON.stringify(allSales.map(s => ({order:s.order,event:s.event,event_dat
     const text = textBlock ? textBlock.text : '';
     const clean = text.replace(/```json|```/g,'').trim();
     const parsed = JSON.parse(clean);
-
     if (Array.isArray(parsed) && parsed.length > 0) {
       allSales = parsed.map((r,i) => ({...allSales[i],...r,n:i+1}));
     }
-
     setStatus('ok',`Refreshed at ${new Date().toLocaleTimeString()} · ${allSales.length} orders`,'Next refresh in 60m 00s');
     startProgressBar();
   } catch(err) {
     setStatus('warn','Could not refresh — showing current data');
   }
-
   renderScheduleBanner();
   renderStats(allSales);
   renderFilters();
@@ -435,7 +384,6 @@ Data: ${JSON.stringify(allSales.map(s => ({order:s.order,event:s.event,event_dat
   clearTimeout(refreshTimer);
   refreshTimer = setTimeout(() => loadSales(false), REFRESH_INTERVAL_MS);
 }
-
 function exportCSV() {
   const headers = ['#','Order','Event','Event Date','Time (UTC)','Qty','Processor','Processed'];
   const rows = allSales.map(r => [
@@ -448,7 +396,6 @@ function exportCSV() {
   a.download = `stubhub_sales_${new Date().toISOString().slice(0,10)}.csv`;
   a.click();
 }
-
 document.getElementById('date-label').textContent = new Date().toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
 renderScheduleBanner();
 renderFilters();
@@ -459,4 +406,3 @@ refreshTimer = setTimeout(() => loadSales(false), REFRESH_INTERVAL_MS);
 </script>
 </body>
 </html>
-```
