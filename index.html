@@ -34,6 +34,7 @@
   tr:hover td{background:#fafaf8}
   tr.processed td{opacity:0.4;text-decoration:line-through}
   tr.processed td:first-child{text-decoration:none;opacity:1}
+  tr.accepted td{background:#f0faf6!important}
   .pill{display:inline-block;font-size:11px;font-weight:500;padding:2px 9px;border-radius:999px}
   .priority-pill{outline:2px solid #1D9E75;outline-offset:1px}
   .status-bar{font-size:12px;color:#888;display:flex;align-items:center;gap:6px;margin-bottom:16px;min-height:20px;flex-wrap:wrap}
@@ -51,6 +52,10 @@
   .schedule-info strong{color:#1a1a1a}
   .off-badge{font-size:10px;background:#fef3f2;color:#b91c1c;padding:1px 6px;border-radius:4px;margin-left:4px}
   .on-badge{font-size:10px;background:#e8f8f2;color:#1D9E75;padding:1px 6px;border-radius:4px;margin-left:4px}
+  .accept-btn{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:6px;border:1px solid #1D9E75;background:#fff;cursor:pointer;font-size:11px;font-weight:500;color:#1D9E75}
+  .accept-btn:hover{background:#e8f8f2}
+  .accept-btn:disabled{opacity:0.5;cursor:not-allowed}
+  .accepted-badge{display:inline-block;font-size:10px;background:#1D9E75;color:#fff;padding:2px 8px;border-radius:4px;font-weight:500}
   #csv-input{display:none}
   @media(max-width:600px){body{padding:12px}.topbar{flex-direction:column;align-items:flex-start}}
 </style>
@@ -91,6 +96,7 @@
             <th style="width:52px">Time</th>
             <th style="width:28px;text-align:center">Qty</th>
             <th style="width:96px">Processor</th>
+            <th style="width:80px;text-align:center">Action</th>
           </tr>
         </thead>
         <tbody id="sales-body"></tbody>
@@ -176,6 +182,7 @@ function assignSales(sales) {
 let currentFilter = 'All';
 let allSales = [];
 let processedOrders = [];
+let acceptedOrders = [];
 let refreshTimer = null;
 let progressTimer = null;
 function procStyle(proc) {
@@ -198,10 +205,12 @@ function renderStats(data) {
   const total = data.length;
   const tickets = data.reduce((a,r) => a + (r.qty||1), 0);
   const processed = data.filter(r => processedOrders.includes(r.order)).length;
+  const accepted = data.filter(r => acceptedOrders.includes(r.order)).length;
   const { working } = getWorkingToday();
   let html = `
     <div class="stat"><div class="stat-label">Total orders</div><div class="stat-val">${total}</div></div>
     <div class="stat"><div class="stat-label">Total tickets</div><div class="stat-val">${tickets}</div></div>
+    <div class="stat" style="border-left:3px solid #1D9E75"><div class="stat-label">Accepted</div><div class="stat-val">${accepted}</div></div>
     <div class="stat" style="border-left:3px solid #1D9E75"><div class="stat-label">Processed</div><div class="stat-val">${processed}</div></div>
     <div class="stat" style="border-left:3px solid #BA7517"><div class="stat-label">Pending</div><div class="stat-val">${total-processed}</div></div>
   `;
@@ -246,13 +255,14 @@ function renderTable() {
   const data = currentFilter==='All' ? allSales : allSales.filter(r => r.proc===currentFilter);
   const tbody = document.getElementById('sales-body');
   if (!data.length) {
-    tbody.innerHTML='<tr><td colspan="8" style="text-align:center;padding:24px;color:#aaa">No sales found. Import a CSV to get started.</td></tr>';
+    tbody.innerHTML='<tr><td colspan="9" style="text-align:center;padding:24px;color:#aaa">No sales found. Import a CSV to get started.</td></tr>';
     return;
   }
   tbody.innerHTML = data.map(r => {
     const done = processedOrders.includes(r.order);
+    const accepted = acceptedOrders.includes(r.order);
     const isPriority = priorityActive && priorityWorkers.includes(r.proc);
-    return `<tr class="${done?'processed':''}">
+    return `<tr class="${done?'processed':accepted?'accepted':''}">
       <td style="text-align:center"><input type="checkbox" ${done?'checked':''} onchange="toggleProcessed('${r.order}')"></td>
       <td style="color:#bbb">${r.n}</td>
       <td style="font-family:monospace;font-size:12px">${r.order}</td>
@@ -261,6 +271,12 @@ function renderTable() {
       <td style="color:#888">${r.time||''}</td>
       <td style="text-align:center">${r.qty||1}</td>
       <td><span class="pill ${isPriority?'priority-pill':''}" style="${procStyle(r.proc)}">${r.proc}</span></td>
+      <td style="text-align:center">
+        ${accepted
+          ? '<span class="accepted-badge">✓ Accepted</span>'
+          : `<button class="accept-btn" onclick="acceptSale('${r.order}')" id="accept-${r.order}">Accept</button>`
+        }
+      </td>
     </tr>`;
   }).join('');
 }
@@ -343,28 +359,43 @@ function importCSV(event) {
   };
   reader.readAsText(file);
 }
+async function acceptSale(order) {
+  const btn = document.getElementById('accept-' + order);
+  if (btn) { btn.disabled = true; btn.textContent = 'Reading...'; }
+  if (!acceptedOrders.includes(order)) acceptedOrders.push(order);
+  try {
+    const res = await fetch('/.netlify/functions/refresh-sales', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ action: 'read_email', order: order }),
+    });
+    const responseText = await res.text();
+    console.log('Email read for order', order, responseText);
+  } catch(err) {
+    console.log('Could not read email for order', order, err.message);
+  }
+  document.getElementById('sales-body').innerHTML = '';
+  renderStats(allSales);
+  renderTable();
+}
 async function loadSales(manual=false) {
   const btn = document.getElementById('refresh-btn');
   const icon = document.getElementById('refresh-icon');
   btn.disabled = true;
   icon.classList.add('spinning');
   setStatus('loading','Fetching latest sales from Gmail...');
-
   try {
     const { working } = getWorkingToday();
     const day = getDayName(new Date());
     const priorityActive = PRIORITY_DAYS.includes(day);
     const priorityWorkers = PRIORITY_MEMBERS.filter(p => working.includes(p));
-
     const existingAssignments = JSON.stringify(allSales.map(s => ({order:s.order,event:s.event,event_date:s.event_date,qty:s.qty,proc:s.proc})));
     const prompt = `Today is ${new Date().toDateString()} (${day}). Working today: ${working.join(', ')}. ${priorityActive && priorityWorkers.length ? `Priority workers for soonest event dates: ${priorityWorkers.join(' and ')}.` : ''} Here are the current sales with their processor assignments. Do NOT change any existing processor assignments. Only assign processors to any new orders you find. Return ALL sales as a JSON array with fields: {order, event, event_date, time, qty, proc}. Current sales: ${existingAssignments}`;
-
     const res = await fetch('/.netlify/functions/refresh-sales', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({prompt}),
     });
-
     const responseText = await res.text();
     const data = JSON.parse(responseText);
     const content = data.content || [];
@@ -372,7 +403,6 @@ async function loadSales(manual=false) {
     const text = textBlock ? textBlock.text : '';
     const clean = text.replace(/```json|```/g,'').trim();
     const parsed = JSON.parse(clean);
-
     if (Array.isArray(parsed) && parsed.length > 0) {
       const existingMap = {};
       allSales.forEach(s => { existingMap[s.order] = s; });
@@ -381,13 +411,11 @@ async function loadSales(manual=false) {
         return existing ? {...existing, n:i+1} : {...r, n:i+1};
       });
     }
-
     setStatus('ok',`Refreshed at ${new Date().toLocaleTimeString()} · ${allSales.length} orders`,'Next refresh in 60m 00s');
     startProgressBar();
   } catch(err) {
     setStatus('warn','Could not refresh — showing current data');
   }
-
   renderScheduleBanner();
   renderStats(allSales);
   renderFilters();
@@ -398,10 +426,11 @@ async function loadSales(manual=false) {
   refreshTimer = setTimeout(() => loadSales(false), REFRESH_INTERVAL_MS);
 }
 function exportCSV() {
-  const headers = ['#','Order','Event','Event Date','Time (UTC)','Qty','Processor','Processed'];
+  const headers = ['#','Order','Event','Event Date','Time (UTC)','Qty','Processor','Processed','Accepted'];
   const rows = allSales.map(r => [
     r.n, r.order, `"${r.event||''}"`, r.event_date||'', r.time||'', r.qty||1, r.proc,
-    processedOrders.includes(r.order)?'Yes':'No'
+    processedOrders.includes(r.order)?'Yes':'No',
+    acceptedOrders.includes(r.order)?'Yes':'No'
   ]);
   const csv = [headers,...rows].map(r => r.join(',')).join('\n');
   const a = document.createElement('a');
