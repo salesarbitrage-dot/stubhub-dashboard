@@ -1,3 +1,8 @@
+# StubHub Dashboard — index.html
+
+Copy everything between the triple backticks below and paste into GitHub.
+
+```html
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -35,6 +40,7 @@
   tr.processed td{opacity:0.4;text-decoration:line-through}
   tr.processed td:first-child{text-decoration:none;opacity:1}
   .pill{display:inline-block;font-size:11px;font-weight:500;padding:2px 9px;border-radius:999px}
+  .priority-pill{outline:2px solid #1D9E75;outline-offset:1px}
   .status-bar{font-size:12px;color:#888;display:flex;align-items:center;gap:6px;margin-bottom:16px;min-height:20px;flex-wrap:wrap}
   .dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex-shrink:0}
   .dot-green{background:#1D9E75}.dot-amber{background:#BA7517}.dot-red{background:#E24B4A}
@@ -46,9 +52,10 @@
   .progress-fill{height:100%;background:#1D9E75;border-radius:2px;transition:width 1s linear}
   input[type="checkbox"]{width:15px;height:15px;cursor:pointer;accent-color:#1D9E75}
   .done-badge{display:inline-block;font-size:10px;background:#e8f8f2;color:#1D9E75;padding:1px 6px;border-radius:4px;margin-left:4px;text-decoration:none}
-  .import-zone{border:2px dashed #ddd;border-radius:8px;padding:16px;text-align:center;color:#aaa;font-size:13px;margin-bottom:16px;cursor:pointer;transition:border-color 0.2s}
-  .import-zone:hover{border-color:#1D9E75;color:#1D9E75}
-  .import-zone.dragover{border-color:#1D9E75;background:#f0faf6;color:#1D9E75}
+  .schedule-info{background:#fff;border-radius:8px;border:1px solid #e8e8e6;padding:12px 16px;margin-bottom:16px;font-size:12px;color:#666}
+  .schedule-info strong{color:#1a1a1a}
+  .off-badge{font-size:10px;background:#fef3f2;color:#b91c1c;padding:1px 6px;border-radius:4px;margin-left:4px}
+  .on-badge{font-size:10px;background:#e8f8f2;color:#1D9E75;padding:1px 6px;border-radius:4px;margin-left:4px}
   #csv-input{display:none}
   @media(max-width:600px){body{padding:12px}.topbar{flex-direction:column;align-items:flex-start}}
 </style>
@@ -61,20 +68,19 @@
       <p class="subtitle" id="date-label"></p>
     </div>
     <div class="btn-group">
-      <button class="btn" onclick="document.getElementById('csv-input').click()">
-        <i class="ti ti-upload"></i> Import CSV
-      </button>
+      <button class="btn" onclick="document.getElementById('csv-input').click()"><i class="ti ti-upload"></i> Import CSV</button>
       <input type="file" id="csv-input" accept=".csv" onchange="importCSV(event)">
       <button class="btn" onclick="exportCSV()"><i class="ti ti-download"></i> Export CSV</button>
       <button class="btn" onclick="clearProcessed()"><i class="ti ti-trash"></i> Clear processed</button>
-      <button class="btn" id="refresh-btn" onclick="loadSales(true)">
-        <i class="ti ti-refresh" id="refresh-icon"></i> Refresh
-      </button>
+      <button class="btn" id="refresh-btn" onclick="loadSales(true)"><i class="ti ti-refresh" id="refresh-icon"></i> Refresh</button>
     </div>
   </div>
+
+  <div id="schedule-banner" class="schedule-info"></div>
   <div class="progress-bar"><div class="progress-fill" id="progress-fill" style="width:100%"></div></div>
   <div id="status-area" class="status-bar"></div>
   <div class="stats" id="stats-row"></div>
+
   <div class="card">
     <div class="card-header">
       <span class="card-title">Sales log</span>
@@ -85,96 +91,113 @@
         <thead>
           <tr>
             <th style="width:32px;text-align:center">Done</th>
-            <th style="width:32px">#</th>
-            <th style="width:92px">Order</th>
+            <th style="width:28px">#</th>
+            <th style="width:88px">Order</th>
             <th>Event</th>
-            <th style="width:55px">Time</th>
-            <th style="width:32px;text-align:center">Qty</th>
-            <th style="width:94px">Processor</th>
+            <th style="width:90px">Event Date</th>
+            <th style="width:52px">Time</th>
+            <th style="width:28px;text-align:center">Qty</th>
+            <th style="width:96px">Processor</th>
           </tr>
         </thead>
         <tbody id="sales-body"></tbody>
       </table>
     </div>
   </div>
-  <p class="footer">Auto-refreshes every hour · Import a CSV to update sales · Pulls from Gmail "Sold StubHub Tickets" label</p>
+  <p class="footer">Auto-refreshes every hour · Import a CSV to update sales · Assignments based on work schedules</p>
 </div>
+
 <script>
 const REFRESH_INTERVAL_MS = 60 * 60 * 1000;
-const PROCESSORS = ['Kassandra','Lydia','Tochukwu','Joshua','Pearl','Enomfon','Lois','Marco','Christine'];
-const PROC_COLORS = [
-  {bg:'#FCE5CD',color:'#7A4A10'},
-  {bg:'#D9EAD3',color:'#2D6010'},
-  {bg:'#CFE2F3',color:'#0C447C'},
-  {bg:'#EAD1DC',color:'#72243E'},
-  {bg:'#E8D5F5',color:'#5B2D8C'},
-  {bg:'#D5EEF5',color:'#0A5C72'},
-  {bg:'#F5E6D5',color:'#7A4A10'},
-  {bg:'#D5F5E3',color:'#1A6B3C'},
-  {bg:'#F5D5D5',color:'#8C1A1A'},
-];
-const PROC_STYLE_MAP = {};
-PROCESSORS.forEach((p,i) => { PROC_STYLE_MAP[p] = PROC_COLORS[i]; });
 
-const SEED_SALES = [
-  {n:1,order:'644698612',event:'Upon A Burning Body',time:'00:28',qty:1},
-  {n:2,order:'644698221',event:'The Eagles',time:'00:22',qty:1},
-  {n:3,order:'644698107',event:'Notre Dame Fighting Irish at Syracuse Orange Football',time:'00:21',qty:1},
-  {n:4,order:'644697455',event:'Jill Scott',time:'00:12',qty:1},
-  {n:5,order:'644696981',event:'Monster Jam',time:'00:06',qty:1},
-  {n:6,order:'644696296',event:'El Coyote & Chuy Lizarraga - Capibaras Tour',time:'23:57',qty:1},
-  {n:7,order:'644696220',event:'US Open Tennis: Session 4',time:'23:57',qty:1},
-  {n:8,order:'644696067',event:'The Temptations & The Four Tops',time:'23:54',qty:1},
-  {n:9,order:'644695985',event:'US Open Tennis: Session 3 (Louis Armstrong)',time:'23:53',qty:1},
-  {n:10,order:'644695967',event:'John Cameron Mitchell: Hedwig 25th Anniversary',time:'23:53',qty:1},
-  {n:11,order:'644695289',event:'Rufus Du Sol',time:'23:44',qty:1},
-  {n:12,order:'644695152',event:'Mumford & Sons',time:'23:42',qty:1},
-  {n:13,order:'644694308',event:'NCAA Baseball College World Series - Game 9',time:'23:31',qty:1},
-  {n:14,order:'644693778',event:'Panama vs Croatia - World Cup Group L',time:'23:24',qty:1},
-  {n:15,order:'644693615',event:'Sugar Land Space Cowboys at El Paso Chihuahuas',time:'23:22',qty:1},
-  {n:16,order:'644691383',event:'Matt Rife',time:'22:54',qty:1},
-  {n:17,order:'644690786',event:'Mojo Brookzz Outta Pocket Tour',time:'22:44',qty:1},
-  {n:18,order:'644690644',event:'Shaky Knees Music Festival (3 Day Pass)',time:'22:42',qty:1},
-  {n:19,order:'644690386',event:'Bonnaroo Music and Arts Festival (Saturday Pass)',time:'22:39',qty:1},
-  {n:20,order:'644690155',event:'Little Big Town with Randy Houser and Mae Estes',time:'22:36',qty:1},
-  {n:21,order:'644688637',event:'Matt Rife',time:'22:17',qty:1},
-  {n:22,order:'644688327',event:'Don Omar',time:'22:13',qty:1},
-  {n:23,order:'644686890',event:'Kehlani',time:'21:55',qty:1},
-  {n:24,order:'644686620',event:'Norway vs Morocco Mens National Football',time:'21:52',qty:6},
-  {n:25,order:'644685187',event:'US Open Tennis: Session 1 (Louis Armstrong)',time:'21:37',qty:1},
-  {n:26,order:'644684315',event:'Michigan State Spartans at Wisconsin Badgers Football',time:'21:25',qty:1},
-  {n:27,order:'644683404',event:"Commissioner's Cup: Washington Mystics at Atlanta Dream",time:'21:15',qty:1},
-  {n:28,order:'644682436',event:'US Open Tennis: Mens Singles Final',time:'21:03',qty:1},
-  {n:29,order:'644682404',event:'Norway vs Morocco Mens National Football',time:'21:04',qty:1},
-  {n:30,order:'644680969',event:'Vegas Golden Knights at Carolina Hurricanes SCF Game 2',time:'20:46',qty:1},
-  {n:31,order:'644679808',event:'Zeds Dead',time:'20:33',qty:1},
-  {n:32,order:'644679723',event:'Mumford & Sons',time:'20:32',qty:1},
-  {n:33,order:'644678811',event:'Art Garfunkel',time:'20:21',qty:1},
-  {n:34,order:'644678244',event:'National Finals Rodeo',time:'20:14',qty:1},
-  {n:35,order:'644677453',event:'San Francisco Giants at Chicago Cubs',time:'20:06',qty:1},
-  {n:36,order:'644676513',event:'El Coyote Y Chuy Lizarraga: Capibaras Tour',time:'19:55',qty:1},
-  {n:37,order:'644676432',event:'Twenty One Pilots',time:'19:53',qty:1},
-  {n:38,order:'644676309',event:'Le Sserafim',time:'19:52',qty:1},
-  {n:39,order:'644675148',event:'US Open Tennis: Session 5',time:'19:38',qty:1},
-  {n:40,order:'644674430',event:'Governors Ball - 3 Day Pass (June 5-7)',time:'19:29',qty:1},
-  {n:41,order:'644673203',event:'Governors Ball - Friday Pass Only',time:'19:13',qty:1},
-  {n:42,order:'644671668',event:'Erie Seawolves at Richmond Flying Squirrels',time:'18:54',qty:1},
-  {n:43,order:'644670720',event:'England vs Costa Rica',time:'18:42',qty:1},
-  {n:44,order:'644669375',event:'Ghana vs Panama - World Cup Group L',time:'18:27',qty:1},
-  {n:45,order:'644667525',event:'Governors Ball - Friday Pass',time:'18:06',qty:1},
-  {n:46,order:'644667403',event:'Nate Bargatze',time:'18:04',qty:1},
-  {n:47,order:'644666833',event:'SF Giants at Chicago Cubs',time:'17:57',qty:1},
-  {n:48,order:'644666526',event:'Senegal vs Iraq - World Cup Group I',time:'17:53',qty:1},
-  {n:49,order:'644665599',event:'Lollapalooza - 2 Day Pass (July 31 - Aug 1)',time:'17:43',qty:1},
-  {n:50,order:'644665402',event:'NCAA Baseball CWS - Game 9',time:'17:41',qty:1},
-];
+const SCHEDULES = {
+  'Enomfon':   ['Monday','Tuesday','Thursday','Friday','Saturday'],
+  'Christine': ['Monday','Tuesday','Wednesday','Thursday','Saturday'],
+  'Lois':      ['Monday','Tuesday','Wednesday','Thursday','Saturday'],
+  'Tochukwu':  ['Monday','Tuesday','Wednesday','Thursday','Sunday'],
+  'Joshua':    ['Monday','Tuesday','Wednesday','Thursday','Sunday'],
+  'Marco':     ['Tuesday','Wednesday','Thursday','Friday','Saturday'],
+  'Kassandra': ['Monday','Tuesday','Friday','Saturday','Sunday'],
+  'Lydia':     ['Monday','Tuesday','Wednesday','Thursday','Sunday'],
+  'Pearl':     ['Tuesday','Wednesday','Thursday','Friday','Saturday'],
+};
 
-function assignEqually(sales) {
-  return sales.map((s,i) => ({...s, proc: PROCESSORS[i % PROCESSORS.length]}));
+const ALL_PROCESSORS = ['Kassandra','Lydia','Tochukwu','Joshua','Pearl','Enomfon','Lois','Marco','Christine'];
+const PRIORITY_DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday'];
+const PRIORITY_MEMBERS = ['Joshua','Christine'];
+
+const PROC_COLORS = {
+  'Kassandra': {bg:'#FCE5CD',color:'#7A4A10'},
+  'Lydia':     {bg:'#D9EAD3',color:'#2D6010'},
+  'Tochukwu':  {bg:'#CFE2F3',color:'#0C447C'},
+  'Joshua':    {bg:'#EAD1DC',color:'#72243E'},
+  'Pearl':     {bg:'#E8D5F5',color:'#5B2D8C'},
+  'Enomfon':   {bg:'#D5EEF5',color:'#0A5C72'},
+  'Lois':      {bg:'#F5E6D5',color:'#7A4A10'},
+  'Marco':     {bg:'#D5F5E3',color:'#1A6B3C'},
+  'Christine': {bg:'#F5D5D5',color:'#8C1A1A'},
+};
+
+function getDayName(date) {
+  return ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][date.getDay()];
+}
+
+function getWorkingToday() {
+  const day = getDayName(new Date());
+  return {
+    day,
+    working: ALL_PROCESSORS.filter(p => SCHEDULES[p].includes(day)),
+    off: ALL_PROCESSORS.filter(p => !SCHEDULES[p].includes(day)),
+  };
+}
+
+function parseEventDate(dateStr) {
+  if (!dateStr) return null;
+  const d = new Date(dateStr);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function assignSales(sales) {
+  const { day, working } = getWorkingToday();
+  if (!working.length) return sales.map((s,i) => ({...s, n:i+1, proc:'Unassigned'}));
+
+  const priorityActive = PRIORITY_DAYS.includes(day);
+  const priorityWorkers = PRIORITY_MEMBERS.filter(p => working.includes(p));
+  const otherWorkers = working.filter(p => !PRIORITY_MEMBERS.includes(p));
+
+  const sorted = [...sales].sort((a,b) => {
+    const da = parseEventDate(a.event_date);
+    const db = parseEventDate(b.event_date);
+    if (!da && !db) return 0;
+    if (!da) return 1;
+    if (!db) return -1;
+    return da - db;
+  });
+
+  let result = [];
+
+  if (priorityActive && priorityWorkers.length) {
+    const total = sorted.length;
+    const priorityCount = Math.round(total * priorityWorkers.length / working.length);
+    const prioritySales = sorted.slice(0, priorityCount);
+    const otherSales = sorted.slice(priorityCount);
+
+    prioritySales.forEach((s,i) => result.push({...s, proc: priorityWorkers[i % priorityWorkers.length]}));
+
+    if (otherWorkers.length) {
+      otherSales.forEach((s,i) => result.push({...s, proc: otherWorkers[i % otherWorkers.length]}));
+    } else {
+      otherSales.forEach((s,i) => result.push({...s, proc: priorityWorkers[i % priorityWorkers.length]}));
+    }
+  } else {
+    sorted.forEach((s,i) => result.push({...s, proc: working[i % working.length]}));
+  }
+
+  return result.map((s,i) => ({...s, n:i+1}));
 }
 
 let currentFilter = 'All';
-let allSales = assignEqually(SEED_SALES.map(s => ({...s})));
+let allSales = [];
 let processedOrders = JSON.parse(localStorage.getItem('processedOrders') || '[]');
 let refreshTimer = null;
 let progressTimer = null;
@@ -184,84 +207,48 @@ function saveProcessed() {
 }
 
 function procStyle(proc) {
-  const s = PROC_STYLE_MAP[proc] || {bg:'#eee',color:'#555'};
+  const s = PROC_COLORS[proc] || {bg:'#eee',color:'#555'};
   return `background:${s.bg};color:${s.color}`;
 }
 
-function importCSV(event) {
-  const file = event.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = function(e) {
-    try {
-      const lines = e.target.result.split('\n').filter(l => l.trim());
-      const headers = lines[0].split(',').map(h => h.replace(/"/g,'').trim().toLowerCase());
-      const orderIdx = headers.findIndex(h => h.includes('order'));
-      const eventIdx = headers.findIndex(h => h.includes('event'));
-      const timeIdx  = headers.findIndex(h => h.includes('time'));
-      const qtyIdx   = headers.findIndex(h => h.includes('qty') || h.includes('ticket'));
-      const procIdx  = headers.findIndex(h => h.includes('processor'));
-      const doneIdx  = headers.findIndex(h => h.includes('processed'));
+function renderScheduleBanner() {
+  const { day, working, off } = getWorkingToday();
+  const priorityActive = PRIORITY_DAYS.includes(day);
+  const priorityWorkers = PRIORITY_MEMBERS.filter(p => working.includes(p));
 
-      if (orderIdx === -1 || eventIdx === -1) {
-        alert('CSV must have Order and Event columns.');
-        return;
-      }
-
-      const imported = [];
-      for (let i = 1; i < lines.length; i++) {
-        const cols = lines[i].split(',').map(c => c.replace(/"/g,'').trim());
-        if (!cols[orderIdx]) continue;
-        imported.push({
-          n: i,
-          order: cols[orderIdx],
-          event: cols[eventIdx] || '',
-          time:  timeIdx  !== -1 ? cols[timeIdx]  : '',
-          qty:   qtyIdx   !== -1 ? parseInt(cols[qtyIdx]) || 1 : 1,
-          proc:  procIdx  !== -1 && cols[procIdx] ? cols[procIdx] : PROCESSORS[(i-1) % PROCESSORS.length],
-        });
-        if (doneIdx !== -1 && cols[doneIdx] && cols[doneIdx].toLowerCase() === 'yes') {
-          if (!processedOrders.includes(cols[orderIdx])) processedOrders.push(cols[orderIdx]);
-        }
-      }
-
-      if (!imported.length) { alert('No sales found in CSV.'); return; }
-      allSales = imported;
-      saveProcessed();
-      renderStats(allSales);
-      renderFilters();
-      renderTable();
-      setStatus('ok', `Imported ${imported.length} orders from CSV · ${new Date().toLocaleTimeString()}`);
-      event.target.value = '';
-    } catch(err) {
-      alert('Could not read CSV: ' + err.message);
-    }
-  };
-  reader.readAsText(file);
+  let html = `<strong>Today is ${day}.</strong> &nbsp;`;
+  html += `Working: ` + working.map(p => `<span class="on-badge">${p}</span>`).join(' ');
+  if (off.length) html += ` &nbsp; Off: ` + off.map(p => `<span class="off-badge">${p}</span>`).join(' ');
+  if (priorityActive && priorityWorkers.length) {
+    html += `<br><span style="margin-top:6px;display:inline-block">⭐ Priority today (closest event dates): <strong>${priorityWorkers.join(' & ')}</strong></span>`;
+  }
+  document.getElementById('schedule-banner').innerHTML = html;
 }
 
 function renderStats(data) {
   const total = data.length;
-  const tickets = data.reduce((a,r) => a+r.qty, 0);
+  const tickets = data.reduce((a,r) => a + (r.qty||1), 0);
   const processed = data.filter(r => processedOrders.includes(r.order)).length;
+  const { working } = getWorkingToday();
+
   let html = `
     <div class="stat"><div class="stat-label">Total orders</div><div class="stat-val">${total}</div></div>
     <div class="stat"><div class="stat-label">Total tickets</div><div class="stat-val">${tickets}</div></div>
     <div class="stat" style="border-left:3px solid #1D9E75"><div class="stat-label">Processed</div><div class="stat-val">${processed}</div></div>
     <div class="stat" style="border-left:3px solid #BA7517"><div class="stat-label">Pending</div><div class="stat-val">${total-processed}</div></div>
   `;
-  PROCESSORS.forEach(p => {
+  working.forEach(p => {
     const n = data.filter(r => r.proc === p).length;
-    const s = PROC_STYLE_MAP[p];
+    const s = PROC_COLORS[p] || {bg:'#eee'};
     html += `<div class="stat" style="border-left:3px solid ${s.bg}"><div class="stat-label">${p}</div><div class="stat-val">${n}</div></div>`;
   });
   document.getElementById('stats-row').innerHTML = html;
 }
 
 function renderFilters() {
-  const procs = ['All', ...new Set(['All', ...PROCESSORS, ...allSales.map(s => s.proc)].filter(Boolean))];
+  const { working } = getWorkingToday();
   document.getElementById('filter-btns').innerHTML =
-    ['All',...PROCESSORS].map(p =>
+    ['All', ...working].map(p =>
       `<button class="filter-btn${currentFilter===p?' active':''}" onclick="setFilter('${p}')">${p}</button>`
     ).join('');
 }
@@ -288,22 +275,28 @@ function clearProcessed() {
 }
 
 function renderTable() {
+  const { working } = getWorkingToday();
+  const priorityActive = PRIORITY_DAYS.includes(getDayName(new Date()));
+  const priorityWorkers = PRIORITY_MEMBERS.filter(p => working.includes(p));
+
   const data = currentFilter==='All' ? allSales : allSales.filter(r => r.proc===currentFilter);
   const tbody = document.getElementById('sales-body');
   if (!data.length) {
-    tbody.innerHTML='<tr><td colspan="7" style="text-align:center;padding:24px;color:#aaa">No sales found</td></tr>';
+    tbody.innerHTML='<tr><td colspan="8" style="text-align:center;padding:24px;color:#aaa">No sales found. Import a CSV to get started.</td></tr>';
     return;
   }
   tbody.innerHTML = data.map(r => {
     const done = processedOrders.includes(r.order);
+    const isPriority = priorityActive && priorityWorkers.includes(r.proc);
     return `<tr class="${done?'processed':''}">
       <td style="text-align:center"><input type="checkbox" ${done?'checked':''} onchange="toggleProcessed('${r.order}')"></td>
       <td style="color:#bbb">${r.n}</td>
       <td style="font-family:monospace;font-size:12px">${r.order}</td>
-      <td title="${r.event}">${r.event}${done?'<span class="done-badge">done</span>':''}</td>
-      <td style="color:#888">${r.time}</td>
-      <td style="text-align:center">${r.qty}</td>
-      <td><span class="pill" style="${procStyle(r.proc)}">${r.proc}</span></td>
+      <td title="${r.event||''}">${r.event||''}${done?'<span class="done-badge">done</span>':''}</td>
+      <td style="color:#888;font-size:12px">${r.event_date||''}</td>
+      <td style="color:#888">${r.time||''}</td>
+      <td style="text-align:center">${r.qty||1}</td>
+      <td><span class="pill ${isPriority?'priority-pill':''}" style="${procStyle(r.proc)}">${r.proc}</span></td>
     </tr>`;
   }).join('');
 }
@@ -334,19 +327,92 @@ function startProgressBar() {
   }, 1000);
 }
 
+function importCSV(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const lines = e.target.result.split('\n').filter(l => l.trim());
+      const headers = lines[0].split(',').map(h => h.replace(/"/g,'').trim().toLowerCase());
+      const idx = (names) => {
+        for (const n of names) {
+          const i = headers.findIndex(h => h.includes(n));
+          if (i !== -1) return i;
+        }
+        return -1;
+      };
+      const orderIdx     = idx(['order']);
+      const eventIdx     = idx(['event']);
+      const eventDateIdx = idx(['event date','eventdate','event_date','date']);
+      const timeIdx      = idx(['time']);
+      const qtyIdx       = idx(['qty','ticket','quantity']);
+      const doneIdx      = idx(['processed','done']);
+
+      if (orderIdx === -1 || eventIdx === -1) {
+        alert('CSV must have Order and Event columns.');
+        return;
+      }
+
+      const rawSales = [];
+      for (let i = 1; i < lines.length; i++) {
+        const cols = lines[i].match(/(".*?"|[^,]+)(?=,|$)/g) || lines[i].split(',');
+        const clean = cols.map(c => c.replace(/^"|"$/g,'').trim());
+        if (!clean[orderIdx]) continue;
+        rawSales.push({
+          order:      clean[orderIdx],
+          event:      eventIdx      !== -1 ? clean[eventIdx]      : '',
+          event_date: eventDateIdx  !== -1 ? clean[eventDateIdx]  : '',
+          time:       timeIdx       !== -1 ? clean[timeIdx]       : '',
+          qty:        qtyIdx        !== -1 ? parseInt(clean[qtyIdx])||1 : 1,
+        });
+        if (doneIdx !== -1 && clean[doneIdx] && clean[doneIdx].toLowerCase() === 'yes') {
+          if (!processedOrders.includes(clean[orderIdx])) processedOrders.push(clean[orderIdx]);
+        }
+      }
+
+      if (!rawSales.length) { alert('No sales found in CSV.'); return; }
+
+      allSales = assignSales(rawSales);
+      saveProcessed();
+      renderScheduleBanner();
+      renderStats(allSales);
+      renderFilters();
+      renderTable();
+      setStatus('ok', `Imported ${allSales.length} orders · Assigned based on today's schedule`, 'Auto-refreshes every hour');
+      event.target.value = '';
+    } catch(err) {
+      alert('Could not read CSV: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+}
+
 async function loadSales(manual=false) {
   const btn = document.getElementById('refresh-btn');
   const icon = document.getElementById('refresh-icon');
   btn.disabled = true;
   icon.classList.add('spinning');
   setStatus('loading','Fetching latest sales from Gmail...');
+
   try {
-    const prompt = `Today is ${new Date().toDateString()}. Assign these ${allSales.length} StubHub sales equally across 9 processors in order: ${PROCESSORS.join(', ')}. Sale 1 goes to ${PROCESSORS[0]}, sale 2 to ${PROCESSORS[1]}, cycling through all 9. Return ONLY a JSON array with fields: {order, event, time, qty, proc}. Data: ${JSON.stringify(allSales.map(s => ({order:s.order,event:s.event,qty:s.qty})))}`;
+    const { working } = getWorkingToday();
+    const day = getDayName(new Date());
+    const priorityActive = PRIORITY_DAYS.includes(day);
+    const priorityWorkers = PRIORITY_MEMBERS.filter(p => working.includes(p));
+
+    const prompt = `Today is ${new Date().toDateString()} (${day}).
+Working today: ${working.join(', ')}.
+${priorityActive && priorityWorkers.length ? `Priority workers (get sales with soonest event dates): ${priorityWorkers.join(', ')}.` : ''}
+Reassign these StubHub sales based on today's schedule. Sort by event_date ascending, assign soonest events to priority workers first, then distribute rest equally. Return ONLY a JSON array with fields: {order, event, event_date, time, qty, proc}.
+Data: ${JSON.stringify(allSales.map(s => ({order:s.order,event:s.event,event_date:s.event_date,qty:s.qty})))}`;
+
     const res = await fetch('/.netlify/functions/refresh-sales', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({prompt}),
     });
+
     const responseText = await res.text();
     const data = JSON.parse(responseText);
     const content = data.content || [];
@@ -354,15 +420,20 @@ async function loadSales(manual=false) {
     const text = textBlock ? textBlock.text : '';
     const clean = text.replace(/```json|```/g,'').trim();
     const parsed = JSON.parse(clean);
-    if (Array.isArray(parsed) && parsed.length>0) {
+
+    if (Array.isArray(parsed) && parsed.length > 0) {
       allSales = parsed.map((r,i) => ({...allSales[i],...r,n:i+1}));
     }
+
     setStatus('ok',`Refreshed at ${new Date().toLocaleTimeString()} · ${allSales.length} orders`,'Next refresh in 60m 00s');
     startProgressBar();
   } catch(err) {
     setStatus('warn','Could not refresh — showing current data');
   }
+
+  renderScheduleBanner();
   renderStats(allSales);
+  renderFilters();
   renderTable();
   btn.disabled = false;
   icon.classList.remove('spinning');
@@ -371,8 +442,11 @@ async function loadSales(manual=false) {
 }
 
 function exportCSV() {
-  const headers = ['#','Order','Event','Time (UTC)','Qty','Processor','Processed'];
-  const rows = allSales.map(r => [r.n,r.order,`"${r.event}"`,r.time,r.qty,r.proc,processedOrders.includes(r.order)?'Yes':'No']);
+  const headers = ['#','Order','Event','Event Date','Time (UTC)','Qty','Processor','Processed'];
+  const rows = allSales.map(r => [
+    r.n, r.order, `"${r.event||''}"`, r.event_date||'', r.time||'', r.qty||1, r.proc,
+    processedOrders.includes(r.order)?'Yes':'No'
+  ]);
   const csv = [headers,...rows].map(r => r.join(',')).join('\n');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
@@ -381,11 +455,13 @@ function exportCSV() {
 }
 
 document.getElementById('date-label').textContent = new Date().toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
+renderScheduleBanner();
 renderFilters();
 renderStats(allSales);
 renderTable();
-setStatus('ok',`${allSales.length} orders loaded · Import a CSV or click Refresh to update`,'Auto-refreshes every hour');
+setStatus('ok',"Ready · Import a CSV to load today's sales",'Auto-refreshes every hour');
 refreshTimer = setTimeout(() => loadSales(false), REFRESH_INTERVAL_MS);
 </script>
 </body>
 </html>
+```
