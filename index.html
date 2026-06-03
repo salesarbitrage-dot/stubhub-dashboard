@@ -231,7 +231,9 @@ function toggleProcessed(order) {
   renderTable();
 }
 function clearProcessed() {
-  if (!confirm('Clear all processed checkboxes?')) return;
+  if (!confirm('Remove all processed sales from the list?')) return;
+  allSales = allSales.filter(r => !processedOrders.includes(r.order));
+  allSales = allSales.map((s,i) => ({...s, n:i+1}));
   processedOrders = [];
   document.getElementById('sales-body').innerHTML = '';
   renderStats(allSales);
@@ -266,4 +268,145 @@ function setStatus(type, msg, countdown) {
   const dotClass = {ok:'dot-green',warn:'dot-amber',err:'dot-red',loading:'dot-amber'}[type]||'dot-amber';
   const spinClass = type==='loading'?' spinning':'';
   document.getElementById('status-area').innerHTML =
-    `<span class="dot ${dotClass}
+    `<span class="dot ${dotClass}${spinClass}"></span><span>${msg}</span>${countdown?`<span class="next-refresh" id="countdown">${countdown}</span>`:''}`;
+}
+function startProgressBar() {
+  clearInterval(progressTimer);
+  const start = Date.now();
+  progressTimer = setInterval(() => {
+    const elapsed = Date.now()-start;
+    const pct = Math.max(0,100-(elapsed/REFRESH_INTERVAL_MS)*100);
+    const fill = document.getElementById('progress-fill');
+    if (fill) {
+      fill.style.width = pct+'%';
+      fill.style.background = pct>50?'#1D9E75':pct>20?'#BA7517':'#E24B4A';
+    }
+    const remaining = REFRESH_INTERVAL_MS-elapsed;
+    const m = Math.floor(remaining/60000);
+    const s = Math.floor((remaining%60000)/1000);
+    const el = document.getElementById('countdown');
+    if (el) el.textContent = `Next refresh in ${m}m ${String(s).padStart(2,'0')}s`;
+  }, 1000);
+}
+function importCSV(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const lines = e.target.result.split('\n').filter(l => l.trim());
+      const headers = lines[0].split(',').map(h => h.replace(/"/g,'').trim().toLowerCase());
+      const idx = (names) => {
+        for (const n of names) {
+          const i = headers.findIndex(h => h.includes(n));
+          if (i !== -1) return i;
+        }
+        return -1;
+      };
+      const orderIdx     = idx(['order']);
+      const eventIdx     = idx(['event']);
+      const eventDateIdx = idx(['event date','eventdate','event_date','date']);
+      const timeIdx      = idx(['time']);
+      const qtyIdx       = idx(['qty','ticket','quantity']);
+      const doneIdx      = idx(['processed','done']);
+      if (orderIdx === -1 || eventIdx === -1) {
+        alert('CSV must have Order and Event columns.');
+        return;
+      }
+      const rawSales = [];
+      for (let i = 1; i < lines.length; i++) {
+        const cols = lines[i].match(/(".*?"|[^,]+)(?=,|$)/g) || lines[i].split(',');
+        const clean = cols.map(c => c.replace(/^"|"$/g,'').trim());
+        if (!clean[orderIdx]) continue;
+        rawSales.push({
+          order:      clean[orderIdx],
+          event:      eventIdx      !== -1 ? clean[eventIdx]      : '',
+          event_date: eventDateIdx  !== -1 ? clean[eventDateIdx]  : '',
+          time:       timeIdx       !== -1 ? clean[timeIdx]       : '',
+          qty:        qtyIdx        !== -1 ? parseInt(clean[qtyIdx])||1 : 1,
+        });
+        if (doneIdx !== -1 && clean[doneIdx] && clean[doneIdx].toLowerCase() === 'yes') {
+          if (!processedOrders.includes(clean[orderIdx])) processedOrders.push(clean[orderIdx]);
+        }
+      }
+      if (!rawSales.length) { alert('No sales found in CSV.'); return; }
+      allSales = assignSales(rawSales);
+      renderScheduleBanner();
+      renderStats(allSales);
+      renderFilters();
+      renderTable();
+      setStatus('ok', `Imported ${allSales.length} orders · Assigned based on today's schedule`, 'Auto-refreshes every hour');
+      event.target.value = '';
+    } catch(err) {
+      alert('Could not read CSV: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+}
+async function loadSales(manual=false) {
+  const btn = document.getElementById('refresh-btn');
+  const icon = document.getElementById('refresh-icon');
+  btn.disabled = true;
+  icon.classList.add('spinning');
+  setStatus('loading','Fetching latest sales from Gmail...');
+  try {
+    const { working } = getWorkingToday();
+    const day = getDayName(new Date());
+    const priorityActive = PRIORITY_DAYS.includes(day);
+    const priorityWorkers = PRIORITY_MEMBERS.filter(p => working.includes(p));
+    const prompt = `Today is ${new Date().toDateString()} (${day}).
+Working today: ${working.join(', ')}.
+${priorityActive && priorityWorkers.length ? `Priority workers (get sales with soonest event dates): ${priorityWorkers.join(', ')}.` : ''}
+Reassign these StubHub sales based on today's schedule. Sort by event_date ascending, assign soonest events to priority workers first, then distribute rest equally. Return ONLY a JSON array with fields: {order, event, event_date, time, qty, proc}.
+Data: ${JSON.stringify(allSales.map(s => ({order:s.order,event:s.event,event_date:s.event_date,qty:s.qty})))}`;
+    const res = await fetch('/.netlify/functions/refresh-sales', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({prompt}),
+    });
+    const responseText = await res.text();
+    const data = JSON.parse(responseText);
+    const content = data.content || [];
+    const textBlock = content.find(c => c.type==='text');
+    const text = textBlock ? textBlock.text : '';
+    const clean = text.replace(/```json|```/g,'').trim();
+    const parsed = JSON.parse(clean);
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      allSales = parsed.map((r,i) => ({...allSales[i],...r,n:i+1}));
+    }
+    setStatus('ok',`Refreshed at ${new Date().toLocaleTimeString()} · ${allSales.length} orders`,'Next refresh in 60m 00s');
+    startProgressBar();
+  } catch(err) {
+    setStatus('warn','Could not refresh — showing current data');
+  }
+  renderScheduleBanner();
+  renderStats(allSales);
+  renderFilters();
+  renderTable();
+  btn.disabled = false;
+  icon.classList.remove('spinning');
+  clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(() => loadSales(false), REFRESH_INTERVAL_MS);
+}
+function exportCSV() {
+  const headers = ['#','Order','Event','Event Date','Time (UTC)','Qty','Processor','Processed'];
+  const rows = allSales.map(r => [
+    r.n, r.order, `"${r.event||''}"`, r.event_date||'', r.time||'', r.qty||1, r.proc,
+    processedOrders.includes(r.order)?'Yes':'No'
+  ]);
+  const csv = [headers,...rows].map(r => r.join(',')).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+  a.download = `stubhub_sales_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+}
+document.getElementById('date-label').textContent = new Date().toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
+renderScheduleBanner();
+renderFilters();
+renderStats(allSales);
+renderTable();
+setStatus('ok',"Ready · Import a CSV to load today's sales",'Auto-refreshes every hour');
+refreshTimer = setTimeout(() => loadSales(false), REFRESH_INTERVAL_MS);
+</script>
+</body>
+</html>
