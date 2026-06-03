@@ -349,21 +349,22 @@ async function loadSales(manual=false) {
   btn.disabled = true;
   icon.classList.add('spinning');
   setStatus('loading','Fetching latest sales from Gmail...');
+
   try {
     const { working } = getWorkingToday();
     const day = getDayName(new Date());
     const priorityActive = PRIORITY_DAYS.includes(day);
     const priorityWorkers = PRIORITY_MEMBERS.filter(p => working.includes(p));
-    const prompt = `Today is ${new Date().toDateString()} (${day}).
-Working today: ${working.join(', ')}.
-${priorityActive && priorityWorkers.length ? `Priority workers (get sales with soonest event dates): ${priorityWorkers.join(', ')}.` : ''}
-Reassign these StubHub sales based on today's schedule. Sort by event_date ascending, assign soonest events to priority workers first, then distribute rest equally. Return ONLY a JSON array with fields: {order, event, event_date, time, qty, proc}.
-Data: ${JSON.stringify(allSales.map(s => ({order:s.order,event:s.event,event_date:s.event_date,qty:s.qty})))}`;
+
+    const existingAssignments = JSON.stringify(allSales.map(s => ({order:s.order,event:s.event,event_date:s.event_date,qty:s.qty,proc:s.proc})));
+    const prompt = `Today is ${new Date().toDateString()} (${day}). Working today: ${working.join(', ')}. ${priorityActive && priorityWorkers.length ? `Priority workers for soonest event dates: ${priorityWorkers.join(' and ')}.` : ''} Here are the current sales with their processor assignments. Do NOT change any existing processor assignments. Only assign processors to any new orders you find. Return ALL sales as a JSON array with fields: {order, event, event_date, time, qty, proc}. Current sales: ${existingAssignments}`;
+
     const res = await fetch('/.netlify/functions/refresh-sales', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({prompt}),
     });
+
     const responseText = await res.text();
     const data = JSON.parse(responseText);
     const content = data.content || [];
@@ -371,14 +372,22 @@ Data: ${JSON.stringify(allSales.map(s => ({order:s.order,event:s.event,event_dat
     const text = textBlock ? textBlock.text : '';
     const clean = text.replace(/```json|```/g,'').trim();
     const parsed = JSON.parse(clean);
+
     if (Array.isArray(parsed) && parsed.length > 0) {
-      allSales = parsed.map((r,i) => ({...allSales[i],...r,n:i+1}));
+      const existingMap = {};
+      allSales.forEach(s => { existingMap[s.order] = s; });
+      allSales = parsed.map((r,i) => {
+        const existing = existingMap[r.order];
+        return existing ? {...existing, n:i+1} : {...r, n:i+1};
+      });
     }
+
     setStatus('ok',`Refreshed at ${new Date().toLocaleTimeString()} · ${allSales.length} orders`,'Next refresh in 60m 00s');
     startProgressBar();
   } catch(err) {
     setStatus('warn','Could not refresh — showing current data');
   }
+
   renderScheduleBanner();
   renderStats(allSales);
   renderFilters();
