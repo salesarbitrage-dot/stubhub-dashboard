@@ -15,7 +15,8 @@ async function getGmailToken() {
   return data.access_token;
 }
 
-function extractEventDate(bodyText) {
+function extractEventDate(text) {
+  // Match patterns like "Tuesday, 16 June 2026" or "16 June 2026"
   const patterns = [
     /upload them by \w+,\s+(\d+\s+\w+\s+\d{4})/i,
     /transfer them by \w+,\s+(\d+\s+\w+\s+\d{4})/i,
@@ -23,7 +24,7 @@ function extractEventDate(bodyText) {
     /(\d{1,2}\s+\w+\s+\d{4})/,
   ];
   for (const pattern of patterns) {
-    const match = bodyText.match(pattern);
+    const match = text.match(pattern);
     if (match) {
       const d = new Date(match[1]);
       if (!isNaN(d.getTime())) {
@@ -49,8 +50,9 @@ async function fetchNewSales(token, lastChecked) {
 
   const sales = [];
   for (const thread of data.threads) {
+    // Use metadata format — faster and snippet has the date info we need
     const msgRes = await fetch(
-      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${thread.id}?format=full`,
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${thread.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=Date`,
       { headers: { Authorization: `Bearer ${token}` } }
     );
     const msg = await msgRes.json();
@@ -66,30 +68,17 @@ async function fetchNewSales(token, lastChecked) {
     const eventMatch = subject.match(/ONLY\s+(.+?)\s+-\s+Order#/i);
     if (!orderMatch) continue;
 
-    let bodyText = '';
-    function extractBody(part) {
-      if (part.body?.data) {
-        try {
-          const base64 = part.body.data.replace(/-/g, '+').replace(/_/g, '/');
-          bodyText += atob(base64);
-        } catch(e) {}
-      }
-      if (part.parts) {
-        part.parts.forEach(extractBody);
-      }
-    }
-    extractBody(msg.payload);
-
-    const cleanBody = bodyText
+    // Use snippet for date extraction — it contains clean text like
+    // "Make sure you can upload them by Tuesday, 16 June 2026 15:30"
+    const snippet = msg.snippet || '';
+    const cleanSnippet = snippet
       .replace(/&#39;/g, "'")
       .replace(/&amp;/g, '&')
-      .replace(/&nbsp;/g, ' ')
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/\s+/g, ' ');
+      .replace(/&nbsp;/g, ' ');
 
     const date = dateHeader ? new Date(dateHeader.value) : new Date();
     const timeUTC = date.toISOString().slice(11, 16);
-    const eventDate = extractEventDate(cleanBody);
+    const eventDate = extractEventDate(cleanSnippet);
 
     sales.push({
       order: orderMatch[1],
@@ -135,14 +124,14 @@ function assignSales(newSales, existingSales, schedules, priorityDays, priorityM
     }
   });
 
-  // Split remaining into those WITH and WITHOUT event dates
+  // Split remaining by whether they have event dates
   const withDates = unassigned.filter(s => s.event_date && s.event_date.trim() !== '');
   const withoutDates = unassigned.filter(s => !s.event_date || s.event_date.trim() === '');
 
-  // Use global counter to continue round-robin from where we left off
-  const baseIndex = existingSales.length + result.length;
+  // Base index continues from where existing sales left off
+  const baseIndex = existingSales.length % working.length;
 
-  // Sales WITH dates — apply priority rule
+  // Sales WITH dates — apply priority rule on Sun-Thu
   if (priorityActive && priorityWorkers.length && withDates.length > 0) {
     const sorted = [...withDates].sort((a, b) => new Date(a.event_date) - new Date(b.event_date));
     const total = sorted.length;
@@ -156,13 +145,12 @@ function assignSales(newSales, existingSales, schedules, priorityDays, priorityM
       otherSales.forEach((s, i) => result.push({ ...s, proc: priorityWorkers[i % priorityWorkers.length] }));
     }
   } else {
-    const startIdx = baseIndex % working.length;
-    withDates.forEach((s, i) => result.push({ ...s, proc: working[(startIdx + i) % working.length] }));
+    withDates.forEach((s, i) => result.push({ ...s, proc: working[(baseIndex + i) % working.length] }));
   }
 
   // Sales WITHOUT dates — distribute evenly continuing round-robin
-  const startIndex = (baseIndex + result.length - (existingSales.length)) % working.length;
-  withoutDates.forEach((s, i) => result.push({ ...s, proc: working[(startIndex + i) % working.length] }));
+  const noDateStart = (baseIndex + withDates.length) % working.length;
+  withoutDates.forEach((s, i) => result.push({ ...s, proc: working[(noDateStart + i) % working.length] }));
 
   return result;
 }
@@ -283,28 +271,20 @@ exports.handler = async function (event, context) {
         return { statusCode: 200, headers, body: JSON.stringify({ error: "No threads found" }) };
       }
       const msgRes = await fetch(
-        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${data.threads[0].id}?format=full`,
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${data.threads[0].id}?format=metadata&metadataHeaders=Subject&metadataHeaders=Date`,
         { headers: { Authorization: `Bearer ${gmailToken}` } }
       );
       const msg = await msgRes.json();
-      let bodyText = '';
-      function extractBody(part) {
-        if (part.body?.data) {
-          try {
-            const base64 = part.body.data.replace(/-/g, '+').replace(/_/g, '/');
-            bodyText += atob(base64);
-          } catch(e) { bodyText += 'DECODE_ERROR: ' + e.message; }
-        }
-        if (part.parts) part.parts.forEach(extractBody);
-      }
-      extractBody(msg.payload);
-      const cleanBody = bodyText
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/\s+/g, ' ')
-        .slice(0, 800);
+      const snippet = msg.snippet || '';
+      const cleanSnippet = snippet.replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+      const eventDate = extractEventDate(cleanSnippet);
       return {
         statusCode: 200, headers,
-        body: JSON.stringify({ snippet: msg.snippet, bodyPreview: cleanBody })
+        body: JSON.stringify({
+          snippet: cleanSnippet,
+          extractedDate: eventDate,
+          subject: msg.payload?.headers?.find(h => h.name === 'Subject')?.value
+        })
       };
     } catch(err) {
       return { statusCode: 200, headers, body: JSON.stringify({ error: err.message }) };
