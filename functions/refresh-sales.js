@@ -15,8 +15,11 @@ async function getGmailToken() {
   return data.access_token;
 }
 
+function getTodayKey() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 function extractEventDate(text) {
-  // Match patterns like "Tuesday, 16 June 2026" or "16 June 2026"
   const patterns = [
     /upload them by \w+,\s+(\d+\s+\w+\s+\d{4})/i,
     /transfer them by \w+,\s+(\d+\s+\w+\s+\d{4})/i,
@@ -36,9 +39,12 @@ function extractEventDate(text) {
 }
 
 async function fetchNewSales(token, lastChecked) {
+  // If no lastChecked, pull all of today's sales
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
   const after = lastChecked
     ? Math.floor(new Date(lastChecked).getTime() / 1000)
-    : Math.floor((Date.now() - 3 * 60 * 1000) / 1000);
+    : Math.floor(todayStart.getTime() / 1000);
 
   const query = encodeURIComponent(`label:SOLD-STUBHUB-TICKETS after:${after}`);
   const res = await fetch(
@@ -50,7 +56,6 @@ async function fetchNewSales(token, lastChecked) {
 
   const sales = [];
   for (const thread of data.threads) {
-    // Use metadata format — faster and snippet has the date info we need
     const msgRes = await fetch(
       `https://gmail.googleapis.com/gmail/v1/users/me/messages/${thread.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=Date`,
       { headers: { Authorization: `Bearer ${token}` } }
@@ -68,17 +73,14 @@ async function fetchNewSales(token, lastChecked) {
     const eventMatch = subject.match(/ONLY\s+(.+?)\s+-\s+Order#/i);
     if (!orderMatch) continue;
 
-    // Use snippet for date extraction — it contains clean text like
-    // "Make sure you can upload them by Tuesday, 16 June 2026 15:30"
-    const snippet = msg.snippet || '';
-    const cleanSnippet = snippet
+    const snippet = (msg.snippet || '')
       .replace(/&#39;/g, "'")
       .replace(/&amp;/g, '&')
       .replace(/&nbsp;/g, ' ');
 
     const date = dateHeader ? new Date(dateHeader.value) : new Date();
     const timeUTC = date.toISOString().slice(11, 16);
-    const eventDate = extractEventDate(cleanSnippet);
+    const eventDate = extractEventDate(snippet);
 
     sales.push({
       order: orderMatch[1],
@@ -112,7 +114,7 @@ function assignSales(newSales, existingSales, schedules, priorityDays, priorityM
     }
   });
 
-  // First pass — assign sales matching existing event names
+  // First pass — match existing event names
   const unassigned = [];
   const result = [];
   newSales.forEach(s => {
@@ -124,14 +126,11 @@ function assignSales(newSales, existingSales, schedules, priorityDays, priorityM
     }
   });
 
-  // Split remaining by whether they have event dates
   const withDates = unassigned.filter(s => s.event_date && s.event_date.trim() !== '');
   const withoutDates = unassigned.filter(s => !s.event_date || s.event_date.trim() === '');
-
-  // Base index continues from where existing sales left off
   const baseIndex = existingSales.length % working.length;
 
-  // Sales WITH dates — apply priority rule on Sun-Thu
+  // Sales WITH dates — priority rule on Sun-Thu
   if (priorityActive && priorityWorkers.length && withDates.length > 0) {
     const sorted = [...withDates].sort((a, b) => new Date(a.event_date) - new Date(b.event_date));
     const total = sorted.length;
@@ -148,7 +147,7 @@ function assignSales(newSales, existingSales, schedules, priorityDays, priorityM
     withDates.forEach((s, i) => result.push({ ...s, proc: working[(baseIndex + i) % working.length] }));
   }
 
-  // Sales WITHOUT dates — distribute evenly continuing round-robin
+  // Sales WITHOUT dates — even round-robin
   const noDateStart = (baseIndex + withDates.length) % working.length;
   withoutDates.forEach((s, i) => result.push({ ...s, proc: working[(noDateStart + i) % working.length] }));
 
@@ -192,14 +191,15 @@ exports.handler = async function (event, context) {
   // AUTO CHECK
   if (body.action === "check_new_sales") {
     try {
+      const today = getTodayKey();
       const store = getStore({ name: "sales-dashboard", siteID, token: netlifyToken });
-      const existingData = await store.get("current-sales");
+      const existingData = await store.get(`sales-${today}`);
       const existingSales = existingData ? JSON.parse(existingData) : [];
-      const metaData = await store.get("last-checked");
+      const metaData = await store.get(`last-checked-${today}`);
       const lastChecked = metaData ? JSON.parse(metaData).time : null;
       const gmailToken = await getGmailToken();
       const newSales = await fetchNewSales(gmailToken, lastChecked);
-      await store.set("last-checked", JSON.stringify({ time: new Date().toISOString() }));
+      await store.set(`last-checked-${today}`, JSON.stringify({ time: new Date().toISOString() }));
       if (newSales.length === 0) {
         return { statusCode: 200, headers, body: JSON.stringify({ success: true, newCount: 0, sales: existingSales }) };
       }
@@ -210,7 +210,7 @@ exports.handler = async function (event, context) {
       }
       const assignedNewSales = assignSales(brandNewSales, existingSales, SCHEDULES, PRIORITY_DAYS, PRIORITY_MEMBERS);
       const allSales = [...existingSales, ...assignedNewSales].map((s, i) => ({ ...s, n: i + 1 }));
-      await store.set("current-sales", JSON.stringify(allSales));
+      await store.set(`sales-${today}`, JSON.stringify(allSales));
       return { statusCode: 200, headers, body: JSON.stringify({ success: true, newCount: brandNewSales.length, sales: allSales }) };
     } catch (err) {
       return { statusCode: 200, headers, body: JSON.stringify({ success: false, error: err.message, sales: [] }) };
@@ -220,8 +220,9 @@ exports.handler = async function (event, context) {
   // SAVE
   if (body.action === "save_sales") {
     try {
+      const today = body.date || getTodayKey();
       const store = getStore({ name: "sales-dashboard", siteID, token: netlifyToken });
-      await store.set("current-sales", JSON.stringify(body.sales));
+      await store.set(`sales-${today}`, JSON.stringify(body.sales));
       return { statusCode: 200, headers, body: JSON.stringify({ success: true, count: body.sales.length }) };
     } catch (err) {
       return { statusCode: 200, headers, body: JSON.stringify({ success: false, error: err.message }) };
@@ -231,21 +232,39 @@ exports.handler = async function (event, context) {
   // LOAD
   if (body.action === "load_sales") {
     try {
+      const dateKey = body.date || getTodayKey();
       const store = getStore({ name: "sales-dashboard", siteID, token: netlifyToken });
-      const data = await store.get("current-sales");
-      if (!data) return { statusCode: 200, headers, body: JSON.stringify({ success: true, sales: [], empty: true }) };
-      return { statusCode: 200, headers, body: JSON.stringify({ success: true, sales: JSON.parse(data) }) };
+      const data = await store.get(`sales-${dateKey}`);
+      if (!data) return { statusCode: 200, headers, body: JSON.stringify({ success: true, sales: [], empty: true, date: dateKey }) };
+      return { statusCode: 200, headers, body: JSON.stringify({ success: true, sales: JSON.parse(data), date: dateKey }) };
     } catch (err) {
       return { statusCode: 200, headers, body: JSON.stringify({ success: false, error: err.message, sales: [] }) };
     }
   }
 
-  // CLEAR
-  if (body.action === "clear_sales") {
+  // LIST AVAILABLE DATES
+  if (body.action === "list_dates") {
     try {
       const store = getStore({ name: "sales-dashboard", siteID, token: netlifyToken });
-      await store.delete("current-sales");
-      await store.delete("last-checked");
+      const { blobs } = await store.list({ prefix: "sales-" });
+      const dates = blobs
+        .map(b => b.key.replace("sales-", ""))
+        .filter(d => d.match(/^\d{4}-\d{2}-\d{2}$/))
+        .sort()
+        .reverse();
+      return { statusCode: 200, headers, body: JSON.stringify({ success: true, dates }) };
+    } catch (err) {
+      return { statusCode: 200, headers, body: JSON.stringify({ success: false, dates: [] }) };
+    }
+  }
+
+  // CLEAR TODAY
+  if (body.action === "clear_sales") {
+    try {
+      const today = body.date || getTodayKey();
+      const store = getStore({ name: "sales-dashboard", siteID, token: netlifyToken });
+      await store.delete(`sales-${today}`);
+      await store.delete(`last-checked-${today}`);
       return { statusCode: 200, headers, body: JSON.stringify({ success: true }) };
     } catch (err) {
       return { statusCode: 200, headers, body: JSON.stringify({ success: false, error: err.message }) };
@@ -257,7 +276,7 @@ exports.handler = async function (event, context) {
     return { statusCode: 200, headers, body: JSON.stringify({ success: true, message: `Order ${body.order} accepted.` }) };
   }
 
-  // DEBUG EMAIL BODY
+  // DEBUG
   if (body.action === "debug_email") {
     try {
       const gmailToken = await getGmailToken();
@@ -275,13 +294,12 @@ exports.handler = async function (event, context) {
         { headers: { Authorization: `Bearer ${gmailToken}` } }
       );
       const msg = await msgRes.json();
-      const snippet = msg.snippet || '';
-      const cleanSnippet = snippet.replace(/&#39;/g, "'").replace(/&amp;/g, '&');
-      const eventDate = extractEventDate(cleanSnippet);
+      const snippet = (msg.snippet || '').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+      const eventDate = extractEventDate(snippet);
       return {
         statusCode: 200, headers,
         body: JSON.stringify({
-          snippet: cleanSnippet,
+          snippet,
           extractedDate: eventDate,
           subject: msg.payload?.headers?.find(h => h.name === 'Subject')?.value
         })
