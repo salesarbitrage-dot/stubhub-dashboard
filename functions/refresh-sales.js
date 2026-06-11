@@ -110,6 +110,10 @@ exports.handler = async function (event, context) {
   const PRIORITY_DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday'];
   const PRIORITY_MEMBERS = ['Joshua','Christine'];
 
+  // Get site ID and token for Netlify Blobs
+  const siteID = process.env.NETLIFY_SITE_ID;
+  const token = process.env.NETLIFY_TOKEN;
+
   let body;
   try {
     body = JSON.parse(event.body);
@@ -120,47 +124,35 @@ exports.handler = async function (event, context) {
   // AUTO CHECK
   if (body.action === "check_new_sales") {
     try {
-      const store = getStore("sales-dashboard");
+      const store = getStore({ name: "sales-dashboard", siteID, token });
       const existingData = await store.get("current-sales");
       const existingSales = existingData ? JSON.parse(existingData) : [];
       const metaData = await store.get("last-checked");
       const lastChecked = metaData ? JSON.parse(metaData).time : null;
-      const token = await getGmailToken();
-      const newSales = await fetchNewSales(token, lastChecked);
+      const gmailToken = await getGmailToken();
+      const newSales = await fetchNewSales(gmailToken, lastChecked);
       await store.set("last-checked", JSON.stringify({ time: new Date().toISOString() }));
       if (newSales.length === 0) {
-        return {
-          statusCode: 200, headers,
-          body: JSON.stringify({ success: true, newCount: 0, sales: existingSales }),
-        };
+        return { statusCode: 200, headers, body: JSON.stringify({ success: true, newCount: 0, sales: existingSales }) };
       }
       const existingOrders = new Set(existingSales.map(s => s.order));
       const brandNewSales = newSales.filter(s => !existingOrders.has(s.order));
       if (brandNewSales.length === 0) {
-        return {
-          statusCode: 200, headers,
-          body: JSON.stringify({ success: true, newCount: 0, sales: existingSales }),
-        };
+        return { statusCode: 200, headers, body: JSON.stringify({ success: true, newCount: 0, sales: existingSales }) };
       }
       const assignedNewSales = assignSales(brandNewSales, existingSales, SCHEDULES, PRIORITY_DAYS, PRIORITY_MEMBERS);
       const allSales = [...existingSales, ...assignedNewSales].map((s, i) => ({ ...s, n: i + 1 }));
       await store.set("current-sales", JSON.stringify(allSales));
-      return {
-        statusCode: 200, headers,
-        body: JSON.stringify({ success: true, newCount: brandNewSales.length, sales: allSales }),
-      };
+      return { statusCode: 200, headers, body: JSON.stringify({ success: true, newCount: brandNewSales.length, sales: allSales }) };
     } catch (err) {
-      return {
-        statusCode: 200, headers,
-        body: JSON.stringify({ success: false, error: err.message, sales: [] }),
-      };
+      return { statusCode: 200, headers, body: JSON.stringify({ success: false, error: err.message, sales: [] }) };
     }
   }
 
   // SAVE
   if (body.action === "save_sales") {
     try {
-      const store = getStore("sales-dashboard");
+      const store = getStore({ name: "sales-dashboard", siteID, token });
       await store.set("current-sales", JSON.stringify(body.sales));
       return { statusCode: 200, headers, body: JSON.stringify({ success: true, count: body.sales.length }) };
     } catch (err) {
@@ -171,7 +163,7 @@ exports.handler = async function (event, context) {
   // LOAD
   if (body.action === "load_sales") {
     try {
-      const store = getStore("sales-dashboard");
+      const store = getStore({ name: "sales-dashboard", siteID, token });
       const data = await store.get("current-sales");
       if (!data) return { statusCode: 200, headers, body: JSON.stringify({ success: true, sales: [], empty: true }) };
       return { statusCode: 200, headers, body: JSON.stringify({ success: true, sales: JSON.parse(data) }) };
@@ -183,7 +175,7 @@ exports.handler = async function (event, context) {
   // CLEAR
   if (body.action === "clear_sales") {
     try {
-      const store = getStore("sales-dashboard");
+      const store = getStore({ name: "sales-dashboard", siteID, token });
       await store.delete("current-sales");
       await store.delete("last-checked");
       return { statusCode: 200, headers, body: JSON.stringify({ success: true }) };
