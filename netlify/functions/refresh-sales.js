@@ -114,6 +114,7 @@ function assignSales(newSales, existingSales, schedules, priorityDays, priorityM
   const priorityWorkers = priorityMembers.filter(p => working.includes(p));
   const otherWorkers = working.filter(p => !priorityMembers.includes(p));
 
+  // Build event-to-processor map from existing sales
   const eventProcMap = {};
   existingSales.forEach(s => {
     if (s.event && s.proc) {
@@ -122,6 +123,7 @@ function assignSales(newSales, existingSales, schedules, priorityDays, priorityM
     }
   });
 
+  // First pass — assign sales matching existing event names
   const unassigned = [];
   const result = [];
   newSales.forEach(s => {
@@ -133,9 +135,14 @@ function assignSales(newSales, existingSales, schedules, priorityDays, priorityM
     }
   });
 
+  // Split remaining into those WITH and WITHOUT event dates
   const withDates = unassigned.filter(s => s.event_date && s.event_date.trim() !== '');
   const withoutDates = unassigned.filter(s => !s.event_date || s.event_date.trim() === '');
 
+  // Use global counter to continue round-robin from where we left off
+  const baseIndex = existingSales.length + result.length;
+
+  // Sales WITH dates — apply priority rule
   if (priorityActive && priorityWorkers.length && withDates.length > 0) {
     const sorted = [...withDates].sort((a, b) => new Date(a.event_date) - new Date(b.event_date));
     const total = sorted.length;
@@ -149,10 +156,13 @@ function assignSales(newSales, existingSales, schedules, priorityDays, priorityM
       otherSales.forEach((s, i) => result.push({ ...s, proc: priorityWorkers[i % priorityWorkers.length] }));
     }
   } else {
-    withDates.forEach((s, i) => result.push({ ...s, proc: working[i % working.length] }));
+    const startIdx = baseIndex % working.length;
+    withDates.forEach((s, i) => result.push({ ...s, proc: working[(startIdx + i) % working.length] }));
   }
 
-  withoutDates.forEach((s, i) => result.push({ ...s, proc: working[i % working.length] }));
+  // Sales WITHOUT dates — distribute evenly continuing round-robin
+  const startIndex = (baseIndex + result.length - (existingSales.length)) % working.length;
+  withoutDates.forEach((s, i) => result.push({ ...s, proc: working[(startIndex + i) % working.length] }));
 
   return result;
 }
