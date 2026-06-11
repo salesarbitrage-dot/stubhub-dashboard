@@ -72,6 +72,7 @@
   .date-bar label{color:#888;font-size:12px}
   .date-select{border:1px solid #ddd;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;color:#1a1a1a;background:#fff}
   .date-badge{display:inline-block;font-size:11px;background:#e8f4fd;color:#1a6fa8;padding:2px 8px;border-radius:4px;font-weight:500}
+  .tz-badge{font-size:11px;background:#fff3cd;color:#856404;padding:2px 8px;border-radius:4px;margin-left:auto}
   #csv-input{display:none}
   @media(max-width:600px){body{padding:12px}.topbar{flex-direction:column;align-items:flex-start}}
 </style>
@@ -104,6 +105,7 @@
       <option value="">Loading dates...</option>
     </select>
     <span id="viewing-badge" class="date-badge">Today</span>
+    <span class="tz-badge">🕐 All times in Chicago (CT)</span>
   </div>
 
   <div id="schedule-banner" class="schedule-info"></div>
@@ -133,7 +135,7 @@
             <th style="width:88px">Order</th>
             <th>Event</th>
             <th style="width:90px">Event Date</th>
-            <th style="width:52px">Time</th>
+            <th style="width:80px">Time (CT)</th>
             <th style="width:28px;text-align:center">Qty</th>
             <th style="width:96px">Processor</th>
             <th style="width:90px;text-align:center">Action</th>
@@ -143,10 +145,12 @@
       </table>
     </div>
   </div>
-  <p class="footer">Auto-checks Gmail every 3 minutes · Assignments based on shift times · All team members see the same data</p>
+  <p class="footer">Auto-checks Gmail every 3 minutes · All times in Chicago (CT) · Assignments based on shift times</p>
 </div>
 <script>
 const CHECK_INTERVAL_MS = 3 * 60 * 1000;
+const TZ = 'America/Chicago';
+
 const SCHEDULES = {
   'Enomfon':   ['Monday','Tuesday','Thursday','Friday','Saturday'],
   'Christine': ['Monday','Tuesday','Wednesday','Thursday','Saturday'],
@@ -184,27 +188,44 @@ const PROC_COLORS = {
   'Christine': {bg:'#F5D5D5',color:'#8C1A1A'},
 };
 
-function getTodayKey() { return new Date().toISOString().slice(0, 10); }
-
+// ── Chicago time helpers ──────────────────────────────────────────
+function nowChicago() {
+  return new Date(new Date().toLocaleString('en-US', { timeZone: TZ }));
+}
+function getTodayKey() {
+  const c = nowChicago();
+  return `${c.getFullYear()}-${String(c.getMonth()+1).padStart(2,'0')}-${String(c.getDate()).padStart(2,'0')}`;
+}
+function getChicagoMinutes() {
+  const c = nowChicago();
+  return c.getHours() * 60 + c.getMinutes();
+}
+function formatChicagoTime(date) {
+  return new Date(date).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: true });
+}
+function formatChicagoDateTime(date) {
+  return new Date(date).toLocaleString('en-US', { timeZone: TZ, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
+}
+// Convert UTC time string "HH:MM" to Chicago time string "h:MM AM/PM"
+function utcTimeToChicago(utcTimeStr) {
+  if (!utcTimeStr) return '';
+  const today = getTodayKey();
+  const d = new Date(`${today}T${utcTimeStr}:00Z`);
+  return formatChicagoTime(d);
+}
+function getDayNameChicago() {
+  return nowChicago().toLocaleDateString('en-US', { weekday: 'long' });
+}
 function formatDateLabel(dateStr) {
   const today = getTodayKey();
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  const yesterdayStr = yesterday.toISOString().slice(0, 10);
+  const c = nowChicago();
+  c.setDate(c.getDate() - 1);
+  const yesterdayStr = `${c.getFullYear()}-${String(c.getMonth()+1).padStart(2,'0')}-${String(c.getDate()).padStart(2,'0')}`;
   if (dateStr === today) return `Today (${dateStr})`;
   if (dateStr === yesterdayStr) return `Yesterday (${dateStr})`;
   return dateStr;
 }
-
-function getDayName(date) {
-  return ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][date.getDay()];
-}
-
-function getChicagoMinutes() {
-  const now = new Date();
-  const chicago = new Date(now.toLocaleString('en-US', { timeZone: 'America/Chicago' }));
-  return chicago.getHours() * 60 + chicago.getMinutes();
-}
+// ─────────────────────────────────────────────────────────────────
 
 function isOnShift(proc) {
   const shift = SHIFTS[proc];
@@ -214,7 +235,7 @@ function isOnShift(proc) {
 }
 
 function getWorkingToday() {
-  const day = getDayName(new Date());
+  const day = getDayNameChicago();
   return {
     day,
     working: ALL_PROCESSORS.filter(p => SCHEDULES[p].includes(day)),
@@ -227,21 +248,17 @@ function assignSalesClient(sales) {
   const { day, onShift, working } = getWorkingToday();
   const activeWorkers = onShift.length > 0 ? onShift : working;
   if (!activeWorkers.length) return sales.map((s,i) => ({...s, n:i+1, proc:'Unassigned'}));
-
   const priorityActive = PRIORITY_DAYS.includes(day);
   const priorityWorkers = PRIORITY_MEMBERS.filter(p => activeWorkers.includes(p));
   const otherWorkers = activeWorkers.filter(p => !PRIORITY_MEMBERS.includes(p));
   const workload = {};
   activeWorkers.forEach(p => { workload[p] = 0; });
-
   function getLeastLoaded(group) {
     return group.reduce((min, p) => workload[p] < workload[min] ? p : min, group[0]);
   }
-
   const withDates = sales.filter(s => s.event_date && s.event_date.trim() !== '');
   const withoutDates = sales.filter(s => !s.event_date || s.event_date.trim() === '');
   const result = [];
-
   if (priorityActive && priorityWorkers.length && withDates.length > 0) {
     const sorted = [...withDates].sort((a, b) => new Date(a.event_date) - new Date(b.event_date));
     const priorityCount = Math.round(sorted.length * priorityWorkers.length / activeWorkers.length);
@@ -264,7 +281,6 @@ function assignSalesClient(sales) {
     const proc = getLeastLoaded(activeWorkers);
     result.push({ ...s, proc }); workload[proc]++;
   });
-
   return result.map((s,i) => ({...s, n:i+1}));
 }
 
@@ -307,12 +323,10 @@ function updateTabCounts() {
 }
 
 function renderScheduleBanner() {
-  const { day, working, onShift, off } = getWorkingToday();
+  const { day, working, onShift } = getWorkingToday();
   const priorityActive = PRIORITY_DAYS.includes(day);
   const priorityWorkers = PRIORITY_MEMBERS.filter(p => onShift.includes(p));
-  let html = `<strong>Today is ${day}.</strong><br>`;
-
-  // Show each working member with their shift time and on/off shift status
+  let html = `<strong>Today is ${day} · Chicago time: ${formatChicagoTime(new Date())}</strong><br>`;
   html += `<div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px">`;
   working.forEach(p => {
     const shift = SHIFTS[p];
@@ -323,17 +337,14 @@ function renderScheduleBanner() {
     </span>`;
   });
   html += `</div>`;
-
   if (onShift.length > 0) {
     html += `<div style="margin-top:6px">🟢 Currently on shift: <strong>${onShift.join(', ')}</strong></div>`;
   } else {
     html += `<div style="margin-top:6px;color:#b91c1c">⚠️ No team members currently on shift</div>`;
   }
-
   if (priorityActive && priorityWorkers.length) {
     html += `<div style="margin-top:4px">⭐ Priority (closest event dates): <strong>${priorityWorkers.join(' & ')}</strong></div>`;
   }
-
   document.getElementById('schedule-banner').innerHTML = html;
 }
 
@@ -370,7 +381,7 @@ function setFilter(p) { currentFilter=p; renderFilters(); renderTable(); }
 
 function renderTable() {
   const { onShift, working } = getWorkingToday();
-  const priorityActive = PRIORITY_DAYS.includes(getDayName(new Date()));
+  const priorityActive = PRIORITY_DAYS.includes(getDayNameChicago());
   const priorityWorkers = PRIORITY_MEMBERS.filter(p => (onShift.length > 0 ? onShift : working).includes(p));
   const sales = currentTab === 'active' ? activeSales : processedSales;
   const data = currentFilter==='All' ? sales : sales.filter(r => r.proc===currentFilter);
@@ -386,13 +397,14 @@ function renderTable() {
     const accepted = acceptedOrders.includes(r.order);
     const isNew = newOrderIds.includes(r.order);
     const isPriority = priorityActive && priorityWorkers.includes(r.proc);
+    const ctTime = utcTimeToChicago(r.time);
     if (currentTab === 'processed') {
       return `<tr class="done-row">
         <td style="color:#bbb">${i+1}</td>
         <td style="font-family:monospace;font-size:12px">${r.order}</td>
         <td title="${r.event||''}">${r.event||''} <span class="done-badge">done</span></td>
         <td style="color:#aaa;font-size:12px">${r.event_date||''}</td>
-        <td style="color:#aaa">${r.time||''}</td>
+        <td style="color:#aaa">${ctTime}</td>
         <td style="text-align:center;color:#aaa">${r.qty||1}</td>
         <td><span class="pill" style="${procStyle(r.proc)}">${r.proc}</span></td>
         <td style="text-align:center"><button class="restore-btn" onclick="restoreSale('${r.order}')">↩ Restore</button></td>
@@ -403,7 +415,7 @@ function renderTable() {
       <td style="font-family:monospace;font-size:12px">${r.order}</td>
       <td title="${r.event||''}">${r.event||''}${isNew?'<span class="new-badge">NEW</span>':''}</td>
       <td style="color:#888;font-size:12px">${r.event_date||''}</td>
-      <td style="color:#888">${r.time||''}</td>
+      <td style="color:#888">${ctTime}</td>
       <td style="text-align:center">${r.qty||1}</td>
       <td><span class="pill ${isPriority?'priority-pill':''}" style="${procStyle(r.proc)}">${r.proc}</span></td>
       <td style="text-align:center">
@@ -627,8 +639,8 @@ async function checkNewSales(manual=false) {
       renderFilters();
       renderScheduleBanner();
       renderTable();
-      const now = new Date().toLocaleTimeString();
-      setStatus('ok', `Last checked ${now} · ${activeSales.length} active · ${processedSales.length} processed`, 'Next check in 3m 00s');
+      const now = formatChicagoTime(new Date());
+      setStatus('ok', `Last checked ${now} CT · ${activeSales.length} active · ${processedSales.length} processed`, 'Next check in 3m 00s');
       startProgressBar();
     } else if (data.error) {
       setStatus('warn', `Check failed: ${data.error}`);
@@ -704,8 +716,8 @@ function exportCSV() {
     ...activeSales.map(r => ({...r, status:'Active'})),
     ...processedSales.map(r => ({...r, status:'Processed'}))
   ];
-  const headers = ['#','Order','Event','Event Date','Time (UTC)','Qty','Processor','Status'];
-  const rows = all.map((r,i) => [i+1, r.order, `"${r.event||''}"`, r.event_date||'', r.time||'', r.qty||1, r.proc, r.status]);
+  const headers = ['#','Order','Event','Event Date','Time (CT)','Qty','Processor','Status'];
+  const rows = all.map((r,i) => [i+1, r.order, `"${r.event||''}"`, r.event_date||'', utcTimeToChicago(r.time), r.qty||1, r.proc, r.status]);
   const csv = [headers,...rows].map(r => r.join(',')).join('\n');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
@@ -713,14 +725,18 @@ function exportCSV() {
   a.click();
 }
 
-// Init
-document.getElementById('date-label').textContent = new Date().toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
+// Init — show Chicago date/time
+const chicagoNow = nowChicago();
+document.getElementById('date-label').textContent = chicagoNow.toLocaleDateString('en-US', { timeZone: TZ, weekday:'long', year:'numeric', month:'long', day:'numeric' });
 renderScheduleBanner();
 renderFilters();
 renderStats();
 updateTabCounts();
 renderTable();
 setStatus('loading', 'Loading sales data...');
+
+// Refresh schedule banner every minute to keep "currently on shift" accurate
+setInterval(renderScheduleBanner, 60000);
 
 loadAvailableDates().then(() => {
   switchDate(getTodayKey()).then(() => {
