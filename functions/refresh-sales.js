@@ -66,14 +66,12 @@ async function fetchNewSales(token, lastChecked) {
     const eventMatch = subject.match(/ONLY\s+(.+?)\s+-\s+Order#/i);
     if (!orderMatch) continue;
 
-    // Extract body text using atob
     let bodyText = '';
     function extractBody(part) {
       if (part.body?.data) {
         try {
           const base64 = part.body.data.replace(/-/g, '+').replace(/_/g, '/');
-          const decoded = atob(base64);
-          bodyText += decoded;
+          bodyText += atob(base64);
         } catch(e) {}
       }
       if (part.parts) {
@@ -116,7 +114,6 @@ function assignSales(newSales, existingSales, schedules, priorityDays, priorityM
   const priorityWorkers = priorityMembers.filter(p => working.includes(p));
   const otherWorkers = working.filter(p => !priorityMembers.includes(p));
 
-  // Build event-to-processor map from existing sales
   const eventProcMap = {};
   existingSales.forEach(s => {
     if (s.event && s.proc) {
@@ -125,7 +122,6 @@ function assignSales(newSales, existingSales, schedules, priorityDays, priorityM
     }
   });
 
-  // First pass — assign sales that match existing event names
   const unassigned = [];
   const result = [];
   newSales.forEach(s => {
@@ -137,11 +133,9 @@ function assignSales(newSales, existingSales, schedules, priorityDays, priorityM
     }
   });
 
-  // Split remaining into those WITH and WITHOUT event dates
   const withDates = unassigned.filter(s => s.event_date && s.event_date.trim() !== '');
   const withoutDates = unassigned.filter(s => !s.event_date || s.event_date.trim() === '');
 
-  // Sales WITH dates — apply priority rule
   if (priorityActive && priorityWorkers.length && withDates.length > 0) {
     const sorted = [...withDates].sort((a, b) => new Date(a.event_date) - new Date(b.event_date));
     const total = sorted.length;
@@ -158,7 +152,6 @@ function assignSales(newSales, existingSales, schedules, priorityDays, priorityM
     withDates.forEach((s, i) => result.push({ ...s, proc: working[i % working.length] }));
   }
 
-  // Sales WITHOUT dates — distribute evenly among ALL working
   withoutDates.forEach((s, i) => result.push({ ...s, proc: working[i % working.length] }));
 
   return result;
@@ -264,6 +257,48 @@ exports.handler = async function (event, context) {
   // READ EMAIL
   if (body.action === "read_email") {
     return { statusCode: 200, headers, body: JSON.stringify({ success: true, message: `Order ${body.order} accepted.` }) };
+  }
+
+  // DEBUG EMAIL BODY
+  if (body.action === "debug_email") {
+    try {
+      const gmailToken = await getGmailToken();
+      const query = encodeURIComponent(`label:SOLD-STUBHUB-TICKETS`);
+      const res = await fetch(
+        `https://gmail.googleapis.com/gmail/v1/users/me/threads?q=${query}&maxResults=1`,
+        { headers: { Authorization: `Bearer ${gmailToken}` } }
+      );
+      const data = await res.json();
+      if (!data.threads || !data.threads[0]) {
+        return { statusCode: 200, headers, body: JSON.stringify({ error: "No threads found" }) };
+      }
+      const msgRes = await fetch(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${data.threads[0].id}?format=full`,
+        { headers: { Authorization: `Bearer ${gmailToken}` } }
+      );
+      const msg = await msgRes.json();
+      let bodyText = '';
+      function extractBody(part) {
+        if (part.body?.data) {
+          try {
+            const base64 = part.body.data.replace(/-/g, '+').replace(/_/g, '/');
+            bodyText += atob(base64);
+          } catch(e) { bodyText += 'DECODE_ERROR: ' + e.message; }
+        }
+        if (part.parts) part.parts.forEach(extractBody);
+      }
+      extractBody(msg.payload);
+      const cleanBody = bodyText
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .slice(0, 800);
+      return {
+        statusCode: 200, headers,
+        body: JSON.stringify({ snippet: msg.snippet, bodyPreview: cleanBody })
+      };
+    } catch(err) {
+      return { statusCode: 200, headers, body: JSON.stringify({ error: err.message }) };
+    }
   }
 
   // DEFAULT: Anthropic API
