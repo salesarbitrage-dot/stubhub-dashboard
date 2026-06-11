@@ -53,12 +53,12 @@
   .footer{text-align:center;font-size:11px;color:#aaa;margin-top:16px}
   .progress-bar{height:4px;background:#eee;border-radius:2px;margin-bottom:20px;overflow:hidden}
   .progress-fill{height:100%;background:#1D9E75;border-radius:2px;transition:width 1s linear}
-  input[type="checkbox"]{width:15px;height:15px;cursor:pointer;accent-color:#1D9E75}
   .done-badge{display:inline-block;font-size:10px;background:#e8f8f2;color:#1D9E75;padding:1px 6px;border-radius:4px;margin-left:4px}
-  .schedule-info{background:#fff;border-radius:8px;border:1px solid #e8e8e6;padding:12px 16px;margin-bottom:16px;font-size:12px;color:#666}
+  .schedule-info{background:#fff;border-radius:8px;border:1px solid #e8e8e6;padding:12px 16px;margin-bottom:16px;font-size:12px;color:#666;line-height:1.8}
   .schedule-info strong{color:#1a1a1a}
   .off-badge{font-size:10px;background:#fef3f2;color:#b91c1c;padding:1px 6px;border-radius:4px;margin-left:4px}
   .on-badge{font-size:10px;background:#e8f8f2;color:#1D9E75;padding:1px 6px;border-radius:4px;margin-left:4px}
+  .shift-badge{font-size:10px;background:#f0f4ff;color:#3b5bdb;padding:1px 6px;border-radius:4px;margin-left:4px}
   .accept-btn{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:6px;border:1px solid #1D9E75;background:#fff;cursor:pointer;font-size:11px;font-weight:500;color:#1D9E75}
   .accept-btn:hover{background:#e8f8f2}
   .accept-btn:disabled{opacity:0.5;cursor:not-allowed}
@@ -128,7 +128,7 @@
     <div style="overflow-x:auto">
       <table>
         <thead>
-          <tr id="table-headers">
+          <tr>
             <th style="width:28px">#</th>
             <th style="width:88px">Order</th>
             <th>Event</th>
@@ -143,7 +143,7 @@
       </table>
     </div>
   </div>
-  <p class="footer">Auto-checks Gmail every 3 minutes · Sales stored per day · All team members see the same data</p>
+  <p class="footer">Auto-checks Gmail every 3 minutes · Assignments based on shift times · All team members see the same data</p>
 </div>
 <script>
 const CHECK_INTERVAL_MS = 3 * 60 * 1000;
@@ -157,6 +157,17 @@ const SCHEDULES = {
   'Kassandra': ['Monday','Tuesday','Friday','Saturday','Sunday'],
   'Lydia':     ['Monday','Tuesday','Wednesday','Thursday','Sunday'],
   'Pearl':     ['Tuesday','Wednesday','Thursday','Friday','Saturday'],
+};
+const SHIFTS = {
+  'Kassandra': { in: '7:30 AM',  out: '3:00 PM',  inM: 7*60+30,  outM: 15*60 },
+  'Lydia':     { in: '4:30 AM',  out: '12:00 PM', inM: 4*60+30,  outM: 12*60 },
+  'Tochukwu':  { in: '9:30 AM',  out: '5:00 PM',  inM: 9*60+30,  outM: 17*60 },
+  'Joshua':    { in: '4:30 AM',  out: '12:00 PM', inM: 4*60+30,  outM: 12*60 },
+  'Pearl':     { in: '8:30 AM',  out: '4:00 PM',  inM: 8*60+30,  outM: 16*60 },
+  'Enomfon':   { in: '12:30 PM', out: '8:00 PM',  inM: 12*60+30, outM: 20*60 },
+  'Lois':      { in: '12:30 PM', out: '8:00 PM',  inM: 12*60+30, outM: 20*60 },
+  'Marco':     { in: '7:30 AM',  out: '3:00 PM',  inM: 7*60+30,  outM: 15*60 },
+  'Christine': { in: '4:30 AM',  out: '12:00 PM', inM: 4*60+30,  outM: 12*60 },
 };
 const ALL_PROCESSORS = ['Kassandra','Lydia','Tochukwu','Joshua','Pearl','Enomfon','Lois','Marco','Christine'];
 const PRIORITY_DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday'];
@@ -189,51 +200,71 @@ function getDayName(date) {
   return ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][date.getDay()];
 }
 
+function getChicagoMinutes() {
+  const now = new Date();
+  const chicago = new Date(now.toLocaleString('en-US', { timeZone: 'America/Chicago' }));
+  return chicago.getHours() * 60 + chicago.getMinutes();
+}
+
+function isOnShift(proc) {
+  const shift = SHIFTS[proc];
+  if (!shift) return false;
+  const m = getChicagoMinutes();
+  return m >= shift.inM && m < shift.outM;
+}
+
 function getWorkingToday() {
   const day = getDayName(new Date());
   return {
     day,
     working: ALL_PROCESSORS.filter(p => SCHEDULES[p].includes(day)),
+    onShift: ALL_PROCESSORS.filter(p => SCHEDULES[p].includes(day) && isOnShift(p)),
     off: ALL_PROCESSORS.filter(p => !SCHEDULES[p].includes(day)),
   };
 }
 
 function assignSalesClient(sales) {
-  const { day, working } = getWorkingToday();
-  if (!working.length) return sales.map((s,i) => ({...s, n:i+1, proc:'Unassigned'}));
+  const { day, onShift, working } = getWorkingToday();
+  const activeWorkers = onShift.length > 0 ? onShift : working;
+  if (!activeWorkers.length) return sales.map((s,i) => ({...s, n:i+1, proc:'Unassigned'}));
+
   const priorityActive = PRIORITY_DAYS.includes(day);
-  const priorityWorkers = PRIORITY_MEMBERS.filter(p => working.includes(p));
-  const otherWorkers = working.filter(p => !PRIORITY_MEMBERS.includes(p));
+  const priorityWorkers = PRIORITY_MEMBERS.filter(p => activeWorkers.includes(p));
+  const otherWorkers = activeWorkers.filter(p => !PRIORITY_MEMBERS.includes(p));
   const workload = {};
-  working.forEach(p => { workload[p] = 0; });
+  activeWorkers.forEach(p => { workload[p] = 0; });
+
   function getLeastLoaded(group) {
     return group.reduce((min, p) => workload[p] < workload[min] ? p : min, group[0]);
   }
+
   const withDates = sales.filter(s => s.event_date && s.event_date.trim() !== '');
   const withoutDates = sales.filter(s => !s.event_date || s.event_date.trim() === '');
   const result = [];
+
   if (priorityActive && priorityWorkers.length && withDates.length > 0) {
     const sorted = [...withDates].sort((a, b) => new Date(a.event_date) - new Date(b.event_date));
-    const priorityCount = Math.round(sorted.length * priorityWorkers.length / working.length);
+    const priorityCount = Math.round(sorted.length * priorityWorkers.length / activeWorkers.length);
     sorted.slice(0, priorityCount).forEach(s => {
       const proc = getLeastLoaded(priorityWorkers);
       result.push({ ...s, proc }); workload[proc]++;
     });
-    const fallback = otherWorkers.length ? otherWorkers : working;
+    const fallback = otherWorkers.length ? otherWorkers : activeWorkers;
     sorted.slice(priorityCount).forEach(s => {
       const proc = getLeastLoaded(fallback);
       result.push({ ...s, proc }); workload[proc]++;
     });
   } else {
     withDates.forEach(s => {
-      const proc = getLeastLoaded(working);
+      const proc = getLeastLoaded(activeWorkers);
       result.push({ ...s, proc }); workload[proc]++;
     });
   }
   withoutDates.forEach(s => {
-    const proc = getLeastLoaded(working);
+    const proc = getLeastLoaded(activeWorkers);
     result.push({ ...s, proc }); workload[proc]++;
   });
+
   return result.map((s,i) => ({...s, n:i+1}));
 }
 
@@ -276,29 +307,48 @@ function updateTabCounts() {
 }
 
 function renderScheduleBanner() {
-  const { day, working, off } = getWorkingToday();
+  const { day, working, onShift, off } = getWorkingToday();
   const priorityActive = PRIORITY_DAYS.includes(day);
-  const priorityWorkers = PRIORITY_MEMBERS.filter(p => working.includes(p));
-  let html = `<strong>Today is ${day}.</strong> &nbsp;`;
-  html += `Working: ` + working.map(p => `<span class="on-badge">${p}</span>`).join(' ');
-  if (off.length) html += ` &nbsp; Off: ` + off.map(p => `<span class="off-badge">${p}</span>`).join(' ');
-  if (priorityActive && priorityWorkers.length) {
-    html += `<br><span style="margin-top:6px;display:inline-block">⭐ Priority today (closest event dates): <strong>${priorityWorkers.join(' & ')}</strong></span>`;
+  const priorityWorkers = PRIORITY_MEMBERS.filter(p => onShift.includes(p));
+  let html = `<strong>Today is ${day}.</strong><br>`;
+
+  // Show each working member with their shift time and on/off shift status
+  html += `<div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px">`;
+  working.forEach(p => {
+    const shift = SHIFTS[p];
+    const active = isOnShift(p);
+    html += `<span style="display:inline-flex;align-items:center;gap:4px">
+      <span class="${active ? 'on-badge' : 'off-badge'}">${p}</span>
+      <span class="shift-badge">${shift ? shift.in + ' – ' + shift.out : ''}</span>
+    </span>`;
+  });
+  html += `</div>`;
+
+  if (onShift.length > 0) {
+    html += `<div style="margin-top:6px">🟢 Currently on shift: <strong>${onShift.join(', ')}</strong></div>`;
+  } else {
+    html += `<div style="margin-top:6px;color:#b91c1c">⚠️ No team members currently on shift</div>`;
   }
+
+  if (priorityActive && priorityWorkers.length) {
+    html += `<div style="margin-top:4px">⭐ Priority (closest event dates): <strong>${priorityWorkers.join(' & ')}</strong></div>`;
+  }
+
   document.getElementById('schedule-banner').innerHTML = html;
 }
 
 function renderStats() {
   const total = activeSales.length + processedSales.length;
   const tickets = [...activeSales, ...processedSales].reduce((a,r) => a + (r.qty||1), 0);
-  const { working } = getWorkingToday();
+  const { onShift, working } = getWorkingToday();
+  const activeWorkers = onShift.length > 0 ? onShift : working;
   let html = `
     <div class="stat"><div class="stat-label">Total orders</div><div class="stat-val">${total}</div></div>
     <div class="stat"><div class="stat-label">Total tickets</div><div class="stat-val">${tickets}</div></div>
     <div class="stat" style="border-left:3px solid #1D9E75"><div class="stat-label">Processed</div><div class="stat-val">${processedSales.length}</div></div>
     <div class="stat" style="border-left:3px solid #BA7517"><div class="stat-label">Pending</div><div class="stat-val">${activeSales.length}</div></div>
   `;
-  working.forEach(p => {
+  activeWorkers.forEach(p => {
     const n = activeSales.filter(r => r.proc === p).length;
     const s = PROC_COLORS[p] || {bg:'#eee'};
     html += `<div class="stat" style="border-left:3px solid ${s.bg}"><div class="stat-label">${p}</div><div class="stat-val">${n}</div></div>`;
@@ -307,9 +357,9 @@ function renderStats() {
 }
 
 function renderFilters() {
-  const { working } = getWorkingToday();
-  const sales = currentTab === 'active' ? activeSales : processedSales;
-  const procs = currentTab === 'active' ? working : [...new Set(processedSales.map(s => s.proc))];
+  const { onShift, working } = getWorkingToday();
+  const activeWorkers = onShift.length > 0 ? onShift : working;
+  const procs = currentTab === 'active' ? activeWorkers : [...new Set(processedSales.map(s => s.proc))];
   document.getElementById('filter-btns').innerHTML =
     ['All', ...procs].map(p =>
       `<button class="filter-btn${currentFilter===p?' active':''}" onclick="setFilter('${p}')">${p}</button>`
@@ -319,9 +369,9 @@ function renderFilters() {
 function setFilter(p) { currentFilter=p; renderFilters(); renderTable(); }
 
 function renderTable() {
-  const { working } = getWorkingToday();
+  const { onShift, working } = getWorkingToday();
   const priorityActive = PRIORITY_DAYS.includes(getDayName(new Date()));
-  const priorityWorkers = PRIORITY_MEMBERS.filter(p => working.includes(p));
+  const priorityWorkers = PRIORITY_MEMBERS.filter(p => (onShift.length > 0 ? onShift : working).includes(p));
   const sales = currentTab === 'active' ? activeSales : processedSales;
   const data = currentFilter==='All' ? sales : sales.filter(r => r.proc===currentFilter);
   const tbody = document.getElementById('sales-body');
@@ -499,6 +549,7 @@ async function switchDate(date) {
   currentTab = 'active';
   document.getElementById('tab-active').classList.add('active');
   document.getElementById('tab-processed').classList.remove('active');
+  document.getElementById('table-title').textContent = 'Active sales';
 
   const badge = document.getElementById('viewing-badge');
   badge.textContent = isViewingToday ? 'Today' : 'Archive';
@@ -518,7 +569,6 @@ async function switchDate(date) {
     });
     const data = await res.json();
     if (data.success && data.sales) {
-      // Support both old format (array) and new format (object with active/processed)
       if (Array.isArray(data.sales)) {
         activeSales = data.sales;
         processedSales = [];
@@ -561,7 +611,6 @@ async function checkNewSales(manual=false) {
 
     if (data.success && data.sales) {
       const prevOrders = new Set(activeSales.map(s => s.order));
-      // Merge new sales with existing, avoiding duplicates already in processed
       const processedOrders = new Set(processedSales.map(s => s.order));
       const incoming = Array.isArray(data.sales) ? data.sales : (data.sales.active || []);
       activeSales = incoming.filter(s => !processedOrders.has(s.order));
@@ -576,6 +625,7 @@ async function checkNewSales(manual=false) {
       updateTabCounts();
       renderStats();
       renderFilters();
+      renderScheduleBanner();
       renderTable();
       const now = new Date().toLocaleTimeString();
       setStatus('ok', `Last checked ${now} · ${activeSales.length} active · ${processedSales.length} processed`, 'Next check in 3m 00s');
