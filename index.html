@@ -197,29 +197,49 @@ function assignSalesClient(sales) {
   const priorityActive = PRIORITY_DAYS.includes(day);
   const priorityWorkers = PRIORITY_MEMBERS.filter(p => working.includes(p));
   const otherWorkers = working.filter(p => !PRIORITY_MEMBERS.includes(p));
-  const sorted = [...sales].sort((a,b) => {
-    const da = parseEventDate(a.event_date);
-    const db = parseEventDate(b.event_date);
-    if (!da && !db) return 0;
-    if (!da) return 1;
-    if (!db) return -1;
-    return da - db;
-  });
-  let result = [];
-  if (priorityActive && priorityWorkers.length) {
+
+  const workload = {};
+  working.forEach(p => { workload[p] = 0; });
+
+  function getLeastLoaded(group) {
+    return group.reduce((min, p) => workload[p] < workload[min] ? p : min, group[0]);
+  }
+
+  const withDates = sales.filter(s => s.event_date && s.event_date.trim() !== '');
+  const withoutDates = sales.filter(s => !s.event_date || s.event_date.trim() === '');
+  const result = [];
+
+  if (priorityActive && priorityWorkers.length && withDates.length > 0) {
+    const sorted = [...withDates].sort((a, b) => new Date(a.event_date) - new Date(b.event_date));
     const total = sorted.length;
     const priorityCount = Math.round(total * priorityWorkers.length / working.length);
     const prioritySales = sorted.slice(0, priorityCount);
     const otherSales = sorted.slice(priorityCount);
-    prioritySales.forEach((s,i) => result.push({...s, proc: priorityWorkers[i % priorityWorkers.length]}));
-    if (otherWorkers.length) {
-      otherSales.forEach((s,i) => result.push({...s, proc: otherWorkers[i % otherWorkers.length]}));
-    } else {
-      otherSales.forEach((s,i) => result.push({...s, proc: priorityWorkers[i % priorityWorkers.length]}));
-    }
+    prioritySales.forEach(s => {
+      const proc = getLeastLoaded(priorityWorkers);
+      result.push({ ...s, proc });
+      workload[proc]++;
+    });
+    const fallback = otherWorkers.length ? otherWorkers : working;
+    otherSales.forEach(s => {
+      const proc = getLeastLoaded(fallback);
+      result.push({ ...s, proc });
+      workload[proc]++;
+    });
   } else {
-    sorted.forEach((s,i) => result.push({...s, proc: working[i % working.length]}));
+    withDates.forEach(s => {
+      const proc = getLeastLoaded(working);
+      result.push({ ...s, proc });
+      workload[proc]++;
+    });
   }
+
+  withoutDates.forEach(s => {
+    const proc = getLeastLoaded(working);
+    result.push({ ...s, proc });
+    workload[proc]++;
+  });
+
   return result.map((s,i) => ({...s, n:i+1}));
 }
 
@@ -291,9 +311,19 @@ function setFilter(p) { currentFilter=p; renderFilters(); renderTable(); }
 
 function toggleProcessed(order) {
   if (processedOrders.includes(order)) {
+    // Unchecking — restore the sale
     processedOrders = processedOrders.filter(o => o !== order);
   } else {
-    processedOrders.push(order);
+    // Checking — if also accepted, remove from list entirely
+    if (acceptedOrders.includes(order)) {
+      allSales = allSales.filter(r => r.order !== order);
+      allSales = allSales.map((s,i) => ({...s, n:i+1}));
+      acceptedOrders = acceptedOrders.filter(o => o !== order);
+      saveSalesToCloud(currentDate);
+    } else {
+      // Not accepted yet — just strike through
+      processedOrders.push(order);
+    }
   }
   document.getElementById('sales-body').innerHTML = '';
   renderStats(allSales);
@@ -358,7 +388,7 @@ function renderTable() {
       <td><span class="pill ${isPriority?'priority-pill':''}" style="${procStyle(r.proc)}">${r.proc}</span></td>
       <td style="text-align:center">
         ${accepted
-          ? '<span class="accepted-badge">✓ Accepted</span>'
+          ? `<input type="checkbox" ${done?'checked':''} onchange="toggleProcessed('${r.order}')" title="Tick to remove from list">`
           : `<button class="accept-btn" onclick="acceptSale('${r.order}')" id="accept-${r.order}">Accept</button>`
         }
       </td>
@@ -575,7 +605,7 @@ function importCSV(event) {
 
 async function acceptSale(order) {
   const btn = document.getElementById('accept-' + order);
-  if (btn) { btn.disabled = true; btn.textContent = 'Reading...'; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Accepted'; }
   if (!acceptedOrders.includes(order)) acceptedOrders.push(order);
   try {
     await fetch('/.netlify/functions/refresh-sales', {
@@ -590,10 +620,9 @@ async function acceptSale(order) {
 }
 
 function exportCSV() {
-  const headers = ['#','Order','Event','Event Date','Time (UTC)','Qty','Processor','Processed','Accepted'];
+  const headers = ['#','Order','Event','Event Date','Time (UTC)','Qty','Processor','Accepted'];
   const rows = allSales.map(r => [
     r.n, r.order, `"${r.event||''}"`, r.event_date||'', r.time||'', r.qty||1, r.proc,
-    processedOrders.includes(r.order)?'Yes':'No',
     acceptedOrders.includes(r.order)?'Yes':'No'
   ]);
   const csv = [headers,...rows].map(r => r.join(',')).join('\n');
@@ -611,7 +640,6 @@ renderStats(allSales);
 renderTable();
 setStatus('loading', 'Loading sales data...');
 
-// Load dates and today's sales
 loadAvailableDates().then(() => {
   switchDate(getTodayKey()).then(() => {
     checkTimer = setTimeout(() => checkNewSales(false), CHECK_INTERVAL_MS);
