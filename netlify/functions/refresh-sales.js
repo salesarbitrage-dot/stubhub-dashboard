@@ -39,7 +39,6 @@ function extractEventDate(text) {
 }
 
 async function fetchNewSales(token, lastChecked) {
-  // If no lastChecked, pull all of today's sales
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
   const after = lastChecked
@@ -105,6 +104,18 @@ function assignSales(newSales, existingSales, schedules, priorityDays, priorityM
   const priorityWorkers = priorityMembers.filter(p => working.includes(p));
   const otherWorkers = working.filter(p => !priorityMembers.includes(p));
 
+  // Build workload counter from existing sales
+  const workload = {};
+  working.forEach(p => { workload[p] = 0; });
+  existingSales.forEach(s => {
+    if (s.proc && workload[s.proc] !== undefined) workload[s.proc]++;
+  });
+
+  // Helper — get processor with least sales from a given group
+  function getLeastLoaded(group) {
+    return group.reduce((min, p) => workload[p] < workload[min] ? p : min, group[0]);
+  }
+
   // Build event-to-processor map from existing sales
   const eventProcMap = {};
   existingSales.forEach(s => {
@@ -114,42 +125,61 @@ function assignSales(newSales, existingSales, schedules, priorityDays, priorityM
     }
   });
 
-  // First pass — match existing event names
+  // First pass — assign sales matching existing event names
   const unassigned = [];
   const result = [];
   newSales.forEach(s => {
     const key = s.event.toLowerCase().trim();
     if (eventProcMap[key] && working.includes(eventProcMap[key])) {
-      result.push({ ...s, proc: eventProcMap[key] });
+      const proc = eventProcMap[key];
+      result.push({ ...s, proc });
+      workload[proc]++;
     } else {
       unassigned.push(s);
     }
   });
 
+  // Split remaining by event date
   const withDates = unassigned.filter(s => s.event_date && s.event_date.trim() !== '');
   const withoutDates = unassigned.filter(s => !s.event_date || s.event_date.trim() === '');
-  const baseIndex = existingSales.length % working.length;
 
-  // Sales WITH dates — priority rule on Sun-Thu
+  // Sales WITH dates — priority workers get soonest, others get workload balanced
   if (priorityActive && priorityWorkers.length && withDates.length > 0) {
     const sorted = [...withDates].sort((a, b) => new Date(a.event_date) - new Date(b.event_date));
     const total = sorted.length;
     const priorityCount = Math.round(total * priorityWorkers.length / working.length);
     const prioritySales = sorted.slice(0, priorityCount);
     const otherSales = sorted.slice(priorityCount);
-    prioritySales.forEach((s, i) => result.push({ ...s, proc: priorityWorkers[i % priorityWorkers.length] }));
-    if (otherWorkers.length) {
-      otherSales.forEach((s, i) => result.push({ ...s, proc: otherWorkers[i % otherWorkers.length] }));
-    } else {
-      otherSales.forEach((s, i) => result.push({ ...s, proc: priorityWorkers[i % priorityWorkers.length] }));
-    }
+
+    // Priority sales — assign to least loaded priority worker
+    prioritySales.forEach(s => {
+      const proc = getLeastLoaded(priorityWorkers);
+      result.push({ ...s, proc });
+      workload[proc]++;
+    });
+
+    // Other sales with dates — assign to least loaded non-priority worker
+    const fallback = otherWorkers.length ? otherWorkers : working;
+    otherSales.forEach(s => {
+      const proc = getLeastLoaded(fallback);
+      result.push({ ...s, proc });
+      workload[proc]++;
+    });
   } else {
-    withDates.forEach((s, i) => result.push({ ...s, proc: working[(baseIndex + i) % working.length] }));
+    // No priority — assign to least loaded worker
+    withDates.forEach(s => {
+      const proc = getLeastLoaded(working);
+      result.push({ ...s, proc });
+      workload[proc]++;
+    });
   }
 
-  // Sales WITHOUT dates — even round-robin
-  const noDateStart = (baseIndex + withDates.length) % working.length;
-  withoutDates.forEach((s, i) => result.push({ ...s, proc: working[(noDateStart + i) % working.length] }));
+  // Sales WITHOUT dates — assign to least loaded worker across all working
+  withoutDates.forEach(s => {
+    const proc = getLeastLoaded(working);
+    result.push({ ...s, proc });
+    workload[proc]++;
+  });
 
   return result;
 }
@@ -242,7 +272,7 @@ exports.handler = async function (event, context) {
     }
   }
 
-  // LIST AVAILABLE DATES
+  // LIST DATES
   if (body.action === "list_dates") {
     try {
       const store = getStore({ name: "sales-dashboard", siteID, token: netlifyToken });
@@ -258,7 +288,7 @@ exports.handler = async function (event, context) {
     }
   }
 
-  // CLEAR TODAY
+  // CLEAR
   if (body.action === "clear_sales") {
     try {
       const today = body.date || getTodayKey();
