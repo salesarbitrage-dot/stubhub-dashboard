@@ -16,8 +16,6 @@ async function getGmailToken() {
 }
 
 function extractEventDate(bodyText) {
-  // Try to find upload deadline date which indicates event date proximity
-  // Look for patterns like "upload them by Friday, 6 June 2026" or "transfer them by Saturday, 6 June 2026"
   const patterns = [
     /upload them by \w+,\s+(\d+\s+\w+\s+\d{4})/i,
     /transfer them by \w+,\s+(\d+\s+\w+\s+\d{4})/i,
@@ -51,7 +49,6 @@ async function fetchNewSales(token, lastChecked) {
 
   const sales = [];
   for (const thread of data.threads) {
-    // Fetch full message to get body and headers
     const msgRes = await fetch(
       `https://gmail.googleapis.com/gmail/v1/users/me/messages/${thread.id}?format=full`,
       { headers: { Authorization: `Bearer ${token}` } }
@@ -69,12 +66,14 @@ async function fetchNewSales(token, lastChecked) {
     const eventMatch = subject.match(/ONLY\s+(.+?)\s+-\s+Order#/i);
     if (!orderMatch) continue;
 
-    // Extract body text
+    // Extract body text using atob
     let bodyText = '';
     function extractBody(part) {
       if (part.body?.data) {
         try {
-          bodyText += Buffer.from(part.body.data, 'base64').toString('utf-8');
+          const base64 = part.body.data.replace(/-/g, '+').replace(/_/g, '/');
+          const decoded = atob(base64);
+          bodyText += decoded;
         } catch(e) {}
       }
       if (part.parts) {
@@ -83,8 +82,12 @@ async function fetchNewSales(token, lastChecked) {
     }
     extractBody(msg.payload);
 
-    // Decode HTML entities for date extraction
-    const cleanBody = bodyText.replace(/&#39;/g, "'").replace(/&amp;/g, '&').replace(/<[^>]+>/g, ' ');
+    const cleanBody = bodyText
+      .replace(/&#39;/g, "'")
+      .replace(/&amp;/g, '&')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ');
 
     const date = dateHeader ? new Date(dateHeader.value) : new Date();
     const timeUTC = date.toISOString().slice(11, 16);
@@ -134,8 +137,7 @@ function assignSales(newSales, existingSales, schedules, priorityDays, priorityM
     }
   });
 
-  // Second pass — assign remaining sales
-  // Split into those WITH event dates and those WITHOUT
+  // Split remaining into those WITH and WITHOUT event dates
   const withDates = unassigned.filter(s => s.event_date && s.event_date.trim() !== '');
   const withoutDates = unassigned.filter(s => !s.event_date || s.event_date.trim() === '');
 
