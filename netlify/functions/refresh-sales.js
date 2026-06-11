@@ -30,12 +30,33 @@ function extractEventDate(text) {
     const match = text.match(pattern);
     if (match) {
       const d = new Date(match[1]);
-      if (!isNaN(d.getTime())) {
-        return d.toISOString().slice(0, 10);
-      }
+      if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
     }
   }
   return '';
+}
+
+function isOnShift(processor) {
+  // Get current Chicago time
+  const now = new Date();
+  const chicagoTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/Chicago' }));
+  const currentMinutes = chicagoTime.getHours() * 60 + chicagoTime.getMinutes();
+
+  const SHIFTS = {
+    'Kassandra': { in: 7*60+30,  out: 15*60 },
+    'Lydia':     { in: 4*60+30,  out: 12*60 },
+    'Tochukwu':  { in: 9*60+30,  out: 17*60 },
+    'Joshua':    { in: 4*60+30,  out: 12*60 },
+    'Pearl':     { in: 8*60+30,  out: 16*60 },
+    'Enomfon':   { in: 12*60+30, out: 20*60 },
+    'Lois':      { in: 12*60+30, out: 20*60 },
+    'Marco':     { in: 7*60+30,  out: 15*60 },
+    'Christine': { in: 4*60+30,  out: 12*60 },
+  };
+
+  const shift = SHIFTS[processor];
+  if (!shift) return false;
+  return currentMinutes >= shift.in && currentMinutes < shift.out;
 }
 
 async function fetchNewSales(token, lastChecked) {
@@ -60,27 +81,19 @@ async function fetchNewSales(token, lastChecked) {
       { headers: { Authorization: `Bearer ${token}` } }
     );
     const msg = await msgRes.json();
-
     const headers = msg.payload?.headers || [];
     const subjectHeader = headers.find(h => h.name === 'Subject');
     const dateHeader = headers.find(h => h.name === 'Date');
     if (!subjectHeader) continue;
-
     const subject = subjectHeader.value;
     const orderMatch = subject.match(/Order#\s*(\d+)/i);
     const qtyMatch = subject.match(/sold\s+(\d+)\s+ticket/i);
     const eventMatch = subject.match(/ONLY\s+(.+?)\s+-\s+Order#/i);
     if (!orderMatch) continue;
-
-    const snippet = (msg.snippet || '')
-      .replace(/&#39;/g, "'")
-      .replace(/&amp;/g, '&')
-      .replace(/&nbsp;/g, ' ');
-
+    const snippet = (msg.snippet || '').replace(/&#39;/g, "'").replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ');
     const date = dateHeader ? new Date(dateHeader.value) : new Date();
     const timeUTC = date.toISOString().slice(11, 16);
     const eventDate = extractEventDate(snippet);
-
     sales.push({
       order: orderMatch[1],
       event: eventMatch ? eventMatch[1].trim() : 'Unknown Event',
@@ -97,26 +110,32 @@ function assignSales(newSales, existingSales, schedules, priorityDays, priorityM
   const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
   const day = days[new Date().getDay()];
   const allProcessors = ['Kassandra','Lydia','Tochukwu','Joshua','Pearl','Enomfon','Lois','Marco','Christine'];
-  const working = allProcessors.filter(p => schedules[p].includes(day));
-  if (!working.length) return newSales.map((s) => ({ ...s, proc: 'Unassigned' }));
+
+  // Only assign to processors who are both scheduled today AND currently on shift
+  const working = allProcessors.filter(p => schedules[p].includes(day) && isOnShift(p));
+
+  // If nobody is on shift right now, fall back to scheduled workers
+  const fallbackWorking = allProcessors.filter(p => schedules[p].includes(day));
+  const activeWorkers = working.length > 0 ? working : fallbackWorking;
+
+  if (!activeWorkers.length) return newSales.map((s) => ({ ...s, proc: 'Unassigned' }));
 
   const priorityActive = priorityDays.includes(day);
-  const priorityWorkers = priorityMembers.filter(p => working.includes(p));
-  const otherWorkers = working.filter(p => !priorityMembers.includes(p));
+  const priorityWorkers = priorityMembers.filter(p => activeWorkers.includes(p));
+  const otherWorkers = activeWorkers.filter(p => !priorityMembers.includes(p));
 
-  // Build workload counter from existing sales
+  // Build workload counter
   const workload = {};
-  working.forEach(p => { workload[p] = 0; });
+  activeWorkers.forEach(p => { workload[p] = 0; });
   existingSales.forEach(s => {
     if (s.proc && workload[s.proc] !== undefined) workload[s.proc]++;
   });
 
-  // Helper — get processor with least sales from a given group
   function getLeastLoaded(group) {
     return group.reduce((min, p) => workload[p] < workload[min] ? p : min, group[0]);
   }
 
-  // Build event-to-processor map from existing sales
+  // Build event-to-processor map
   const eventProcMap = {};
   existingSales.forEach(s => {
     if (s.event && s.proc) {
@@ -125,60 +144,48 @@ function assignSales(newSales, existingSales, schedules, priorityDays, priorityM
     }
   });
 
-  // First pass — assign sales matching existing event names
   const unassigned = [];
   const result = [];
+
+  // First pass — same event same processor
   newSales.forEach(s => {
     const key = s.event.toLowerCase().trim();
-    if (eventProcMap[key] && working.includes(eventProcMap[key])) {
+    if (eventProcMap[key] && activeWorkers.includes(eventProcMap[key])) {
       const proc = eventProcMap[key];
       result.push({ ...s, proc });
-      workload[proc]++;
+      workload[proc] = (workload[proc] || 0) + 1;
     } else {
       unassigned.push(s);
     }
   });
 
-  // Split remaining by event date
   const withDates = unassigned.filter(s => s.event_date && s.event_date.trim() !== '');
   const withoutDates = unassigned.filter(s => !s.event_date || s.event_date.trim() === '');
 
-  // Sales WITH dates — priority workers get soonest, others get workload balanced
+  // Sales WITH dates — priority rule
   if (priorityActive && priorityWorkers.length && withDates.length > 0) {
     const sorted = [...withDates].sort((a, b) => new Date(a.event_date) - new Date(b.event_date));
-    const total = sorted.length;
-    const priorityCount = Math.round(total * priorityWorkers.length / working.length);
-    const prioritySales = sorted.slice(0, priorityCount);
-    const otherSales = sorted.slice(priorityCount);
-
-    // Priority sales — assign to least loaded priority worker
-    prioritySales.forEach(s => {
+    const priorityCount = Math.round(sorted.length * priorityWorkers.length / activeWorkers.length);
+    sorted.slice(0, priorityCount).forEach(s => {
       const proc = getLeastLoaded(priorityWorkers);
-      result.push({ ...s, proc });
-      workload[proc]++;
+      result.push({ ...s, proc }); workload[proc]++;
     });
-
-    // Other sales with dates — assign to least loaded non-priority worker
-    const fallback = otherWorkers.length ? otherWorkers : working;
-    otherSales.forEach(s => {
+    const fallback = otherWorkers.length ? otherWorkers : activeWorkers;
+    sorted.slice(priorityCount).forEach(s => {
       const proc = getLeastLoaded(fallback);
-      result.push({ ...s, proc });
-      workload[proc]++;
+      result.push({ ...s, proc }); workload[proc]++;
     });
   } else {
-    // No priority — assign to least loaded worker
     withDates.forEach(s => {
-      const proc = getLeastLoaded(working);
-      result.push({ ...s, proc });
-      workload[proc]++;
+      const proc = getLeastLoaded(activeWorkers);
+      result.push({ ...s, proc }); workload[proc]++;
     });
   }
 
-  // Sales WITHOUT dates — assign to least loaded worker across all working
+  // Sales WITHOUT dates — workload balanced
   withoutDates.forEach(s => {
-    const proc = getLeastLoaded(working);
-    result.push({ ...s, proc });
-    workload[proc]++;
+    const proc = getLeastLoaded(activeWorkers);
+    result.push({ ...s, proc }); workload[proc]++;
   });
 
   return result;
@@ -224,26 +231,36 @@ exports.handler = async function (event, context) {
       const today = getTodayKey();
       const store = getStore({ name: "sales-dashboard", siteID, token: netlifyToken });
       const existingData = await store.get(`sales-${today}`);
-      const existingSales = existingData ? JSON.parse(existingData) : [];
+      let existingActive = [];
+      let existingProcessed = [];
+      if (existingData) {
+        const parsed = JSON.parse(existingData);
+        if (Array.isArray(parsed)) {
+          existingActive = parsed;
+        } else {
+          existingActive = parsed.active || [];
+          existingProcessed = parsed.processed || [];
+        }
+      }
       const metaData = await store.get(`last-checked-${today}`);
       const lastChecked = metaData ? JSON.parse(metaData).time : null;
       const gmailToken = await getGmailToken();
       const newSales = await fetchNewSales(gmailToken, lastChecked);
       await store.set(`last-checked-${today}`, JSON.stringify({ time: new Date().toISOString() }));
       if (newSales.length === 0) {
-        return { statusCode: 200, headers, body: JSON.stringify({ success: true, newCount: 0, sales: existingSales }) };
+        return { statusCode: 200, headers, body: JSON.stringify({ success: true, newCount: 0, sales: { active: existingActive, processed: existingProcessed } }) };
       }
-      const existingOrders = new Set(existingSales.map(s => s.order));
+      const existingOrders = new Set([...existingActive, ...existingProcessed].map(s => s.order));
       const brandNewSales = newSales.filter(s => !existingOrders.has(s.order));
       if (brandNewSales.length === 0) {
-        return { statusCode: 200, headers, body: JSON.stringify({ success: true, newCount: 0, sales: existingSales }) };
+        return { statusCode: 200, headers, body: JSON.stringify({ success: true, newCount: 0, sales: { active: existingActive, processed: existingProcessed } }) };
       }
-      const assignedNewSales = assignSales(brandNewSales, existingSales, SCHEDULES, PRIORITY_DAYS, PRIORITY_MEMBERS);
-      const allSales = [...existingSales, ...assignedNewSales].map((s, i) => ({ ...s, n: i + 1 }));
-      await store.set(`sales-${today}`, JSON.stringify(allSales));
-      return { statusCode: 200, headers, body: JSON.stringify({ success: true, newCount: brandNewSales.length, sales: allSales }) };
+      const assignedNewSales = assignSales(brandNewSales, existingActive, SCHEDULES, PRIORITY_DAYS, PRIORITY_MEMBERS);
+      const allActive = [...existingActive, ...assignedNewSales].map((s, i) => ({ ...s, n: i + 1 }));
+      await store.set(`sales-${today}`, JSON.stringify({ active: allActive, processed: existingProcessed }));
+      return { statusCode: 200, headers, body: JSON.stringify({ success: true, newCount: brandNewSales.length, sales: { active: allActive, processed: existingProcessed } }) };
     } catch (err) {
-      return { statusCode: 200, headers, body: JSON.stringify({ success: false, error: err.message, sales: [] }) };
+      return { statusCode: 200, headers, body: JSON.stringify({ success: false, error: err.message, sales: { active: [], processed: [] } }) };
     }
   }
 
@@ -253,7 +270,7 @@ exports.handler = async function (event, context) {
       const today = body.date || getTodayKey();
       const store = getStore({ name: "sales-dashboard", siteID, token: netlifyToken });
       await store.set(`sales-${today}`, JSON.stringify(body.sales));
-      return { statusCode: 200, headers, body: JSON.stringify({ success: true, count: body.sales.length }) };
+      return { statusCode: 200, headers, body: JSON.stringify({ success: true }) };
     } catch (err) {
       return { statusCode: 200, headers, body: JSON.stringify({ success: false, error: err.message }) };
     }
@@ -265,10 +282,12 @@ exports.handler = async function (event, context) {
       const dateKey = body.date || getTodayKey();
       const store = getStore({ name: "sales-dashboard", siteID, token: netlifyToken });
       const data = await store.get(`sales-${dateKey}`);
-      if (!data) return { statusCode: 200, headers, body: JSON.stringify({ success: true, sales: [], empty: true, date: dateKey }) };
-      return { statusCode: 200, headers, body: JSON.stringify({ success: true, sales: JSON.parse(data), date: dateKey }) };
+      if (!data) return { statusCode: 200, headers, body: JSON.stringify({ success: true, sales: { active: [], processed: [] }, empty: true }) };
+      const parsed = JSON.parse(data);
+      const sales = Array.isArray(parsed) ? { active: parsed, processed: [] } : parsed;
+      return { statusCode: 200, headers, body: JSON.stringify({ success: true, sales, date: dateKey }) };
     } catch (err) {
-      return { statusCode: 200, headers, body: JSON.stringify({ success: false, error: err.message, sales: [] }) };
+      return { statusCode: 200, headers, body: JSON.stringify({ success: false, error: err.message, sales: { active: [], processed: [] } }) };
     }
   }
 
@@ -280,8 +299,7 @@ exports.handler = async function (event, context) {
       const dates = blobs
         .map(b => b.key.replace("sales-", ""))
         .filter(d => d.match(/^\d{4}-\d{2}-\d{2}$/))
-        .sort()
-        .reverse();
+        .sort().reverse();
       return { statusCode: 200, headers, body: JSON.stringify({ success: true, dates }) };
     } catch (err) {
       return { statusCode: 200, headers, body: JSON.stringify({ success: false, dates: [] }) };
@@ -316,24 +334,14 @@ exports.handler = async function (event, context) {
         { headers: { Authorization: `Bearer ${gmailToken}` } }
       );
       const data = await res.json();
-      if (!data.threads || !data.threads[0]) {
-        return { statusCode: 200, headers, body: JSON.stringify({ error: "No threads found" }) };
-      }
+      if (!data.threads || !data.threads[0]) return { statusCode: 200, headers, body: JSON.stringify({ error: "No threads found" }) };
       const msgRes = await fetch(
         `https://gmail.googleapis.com/gmail/v1/users/me/messages/${data.threads[0].id}?format=metadata&metadataHeaders=Subject&metadataHeaders=Date`,
         { headers: { Authorization: `Bearer ${gmailToken}` } }
       );
       const msg = await msgRes.json();
       const snippet = (msg.snippet || '').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
-      const eventDate = extractEventDate(snippet);
-      return {
-        statusCode: 200, headers,
-        body: JSON.stringify({
-          snippet,
-          extractedDate: eventDate,
-          subject: msg.payload?.headers?.find(h => h.name === 'Subject')?.value
-        })
-      };
+      return { statusCode: 200, headers, body: JSON.stringify({ snippet, extractedDate: extractEventDate(snippet), subject: msg.payload?.headers?.find(h => h.name === 'Subject')?.value }) };
     } catch(err) {
       return { statusCode: 200, headers, body: JSON.stringify({ error: err.message }) };
     }
