@@ -16,7 +16,9 @@ async function getGmailToken() {
 }
 
 function getTodayKey() {
-  return new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  const chicago = new Date(now.toLocaleString('en-US', { timeZone: 'America/Chicago' }));
+  return `${chicago.getFullYear()}-${String(chicago.getMonth()+1).padStart(2,'0')}-${String(chicago.getDate()).padStart(2,'0')}`;
 }
 
 function extractEventDate(text) {
@@ -37,34 +39,31 @@ function extractEventDate(text) {
 }
 
 function isOnShift(processor) {
-  // Get current Chicago time
   const now = new Date();
-  const chicagoTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/Chicago' }));
-  const currentMinutes = chicagoTime.getHours() * 60 + chicagoTime.getMinutes();
-
+  const chicago = new Date(now.toLocaleString('en-US', { timeZone: 'America/Chicago' }));
+  const currentMinutes = chicago.getHours() * 60 + chicago.getMinutes();
   const SHIFTS = {
     'Kassandra': { in: 7*60+30,  out: 15*60 },
     'Lydia':     { in: 4*60+30,  out: 12*60 },
     'Tochukwu':  { in: 9*60+30,  out: 17*60 },
     'Joshua':    { in: 4*60+30,  out: 12*60 },
-    'Pearl':     { in: 8*60+30,  out: 16*60 },
     'Enomfon':   { in: 12*60+30, out: 20*60 },
     'Lois':      { in: 12*60+30, out: 20*60 },
     'Marco':     { in: 7*60+30,  out: 15*60 },
     'Christine': { in: 4*60+30,  out: 12*60 },
   };
-
   const shift = SHIFTS[processor];
   if (!shift) return false;
   return currentMinutes >= shift.in && currentMinutes < shift.out;
 }
 
 async function fetchNewSales(token, lastChecked) {
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
+  const now = new Date();
+  const chicago = new Date(now.toLocaleString('en-US', { timeZone: 'America/Chicago' }));
+  chicago.setHours(0, 0, 0, 0);
   const after = lastChecked
     ? Math.floor(new Date(lastChecked).getTime() / 1000)
-    : Math.floor(todayStart.getTime() / 1000);
+    : Math.floor(chicago.getTime() / 1000);
 
   const query = encodeURIComponent(`label:SOLD-STUBHUB-TICKETS after:${after}`);
   const res = await fetch(
@@ -107,24 +106,20 @@ async function fetchNewSales(token, lastChecked) {
 }
 
 function assignSales(newSales, existingSales, schedules, priorityDays, priorityMembers) {
+  const now = new Date();
+  const chicago = new Date(now.toLocaleString('en-US', { timeZone: 'America/Chicago' }));
   const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-  const day = days[new Date().getDay()];
-  const allProcessors = ['Kassandra','Lydia','Tochukwu','Joshua','Pearl','Enomfon','Lois','Marco','Christine'];
-
-  // Only assign to processors who are both scheduled today AND currently on shift
-  const working = allProcessors.filter(p => schedules[p].includes(day) && isOnShift(p));
-
-  // If nobody is on shift right now, fall back to scheduled workers
-  const fallbackWorking = allProcessors.filter(p => schedules[p].includes(day));
-  const activeWorkers = working.length > 0 ? working : fallbackWorking;
-
+  const day = days[chicago.getDay()];
+  const allProcessors = ['Kassandra','Lydia','Tochukwu','Joshua','Enomfon','Lois','Marco','Christine'];
+  const working = allProcessors.filter(p => schedules[p].includes(day));
+  const onShift = working.filter(p => isOnShift(p));
+  const activeWorkers = onShift.length > 0 ? onShift : working;
   if (!activeWorkers.length) return newSales.map((s) => ({ ...s, proc: 'Unassigned' }));
 
   const priorityActive = priorityDays.includes(day);
   const priorityWorkers = priorityMembers.filter(p => activeWorkers.includes(p));
   const otherWorkers = activeWorkers.filter(p => !priorityMembers.includes(p));
 
-  // Build workload counter
   const workload = {};
   activeWorkers.forEach(p => { workload[p] = 0; });
   existingSales.forEach(s => {
@@ -135,7 +130,6 @@ function assignSales(newSales, existingSales, schedules, priorityDays, priorityM
     return group.reduce((min, p) => workload[p] < workload[min] ? p : min, group[0]);
   }
 
-  // Build event-to-processor map
   const eventProcMap = {};
   existingSales.forEach(s => {
     if (s.event && s.proc) {
@@ -146,8 +140,6 @@ function assignSales(newSales, existingSales, schedules, priorityDays, priorityM
 
   const unassigned = [];
   const result = [];
-
-  // First pass — same event same processor
   newSales.forEach(s => {
     const key = s.event.toLowerCase().trim();
     if (eventProcMap[key] && activeWorkers.includes(eventProcMap[key])) {
@@ -162,7 +154,6 @@ function assignSales(newSales, existingSales, schedules, priorityDays, priorityM
   const withDates = unassigned.filter(s => s.event_date && s.event_date.trim() !== '');
   const withoutDates = unassigned.filter(s => !s.event_date || s.event_date.trim() === '');
 
-  // Sales WITH dates — priority rule
   if (priorityActive && priorityWorkers.length && withDates.length > 0) {
     const sorted = [...withDates].sort((a, b) => new Date(a.event_date) - new Date(b.event_date));
     const priorityCount = Math.round(sorted.length * priorityWorkers.length / activeWorkers.length);
@@ -182,7 +173,6 @@ function assignSales(newSales, existingSales, schedules, priorityDays, priorityM
     });
   }
 
-  // Sales WITHOUT dates — workload balanced
   withoutDates.forEach(s => {
     const proc = getLeastLoaded(activeWorkers);
     result.push({ ...s, proc }); workload[proc]++;
@@ -210,7 +200,6 @@ exports.handler = async function (event, context) {
     'Marco':     ['Tuesday','Wednesday','Thursday','Friday','Saturday'],
     'Kassandra': ['Monday','Tuesday','Friday','Saturday','Sunday'],
     'Lydia':     ['Monday','Tuesday','Wednesday','Thursday','Sunday'],
-    'Pearl':     ['Tuesday','Wednesday','Thursday','Friday','Saturday'],
   };
   const PRIORITY_DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday'];
   const PRIORITY_MEMBERS = ['Joshua','Christine'];
@@ -225,7 +214,6 @@ exports.handler = async function (event, context) {
     return { statusCode: 400, headers, body: JSON.stringify({ error: "Invalid JSON body" }) };
   }
 
-  // AUTO CHECK
   if (body.action === "check_new_sales") {
     try {
       const today = getTodayKey();
@@ -264,7 +252,6 @@ exports.handler = async function (event, context) {
     }
   }
 
-  // SAVE
   if (body.action === "save_sales") {
     try {
       const today = body.date || getTodayKey();
@@ -276,7 +263,6 @@ exports.handler = async function (event, context) {
     }
   }
 
-  // LOAD
   if (body.action === "load_sales") {
     try {
       const dateKey = body.date || getTodayKey();
@@ -291,7 +277,6 @@ exports.handler = async function (event, context) {
     }
   }
 
-  // LIST DATES
   if (body.action === "list_dates") {
     try {
       const store = getStore({ name: "sales-dashboard", siteID, token: netlifyToken });
@@ -306,7 +291,6 @@ exports.handler = async function (event, context) {
     }
   }
 
-  // CLEAR
   if (body.action === "clear_sales") {
     try {
       const today = body.date || getTodayKey();
@@ -319,12 +303,10 @@ exports.handler = async function (event, context) {
     }
   }
 
-  // READ EMAIL
   if (body.action === "read_email") {
     return { statusCode: 200, headers, body: JSON.stringify({ success: true, message: `Order ${body.order} accepted.` }) };
   }
 
-  // DEBUG
   if (body.action === "debug_email") {
     try {
       const gmailToken = await getGmailToken();
@@ -347,7 +329,6 @@ exports.handler = async function (event, context) {
     }
   }
 
-  // DEFAULT: Anthropic API
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return { statusCode: 500, headers, body: JSON.stringify({ error: "ANTHROPIC_API_KEY not configured" }) };
 
