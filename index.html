@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>StubHub Sales Dashboard</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎟️</text></svg>">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css">
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f5f3;color:#1a1a1a;padding:24px;min-height:100vh}
@@ -160,20 +161,18 @@ const SCHEDULES = {
   'Marco':     ['Tuesday','Wednesday','Thursday','Friday','Saturday'],
   'Kassandra': ['Monday','Tuesday','Friday','Saturday','Sunday'],
   'Lydia':     ['Monday','Tuesday','Wednesday','Thursday','Sunday'],
-  'Pearl':     ['Tuesday','Wednesday','Thursday','Friday','Saturday'],
 };
 const SHIFTS = {
   'Kassandra': { in: '7:30 AM',  out: '3:00 PM',  inM: 7*60+30,  outM: 15*60 },
   'Lydia':     { in: '4:30 AM',  out: '12:00 PM', inM: 4*60+30,  outM: 12*60 },
   'Tochukwu':  { in: '9:30 AM',  out: '5:00 PM',  inM: 9*60+30,  outM: 17*60 },
   'Joshua':    { in: '4:30 AM',  out: '12:00 PM', inM: 4*60+30,  outM: 12*60 },
-  'Pearl':     { in: '8:30 AM',  out: '4:00 PM',  inM: 8*60+30,  outM: 16*60 },
   'Enomfon':   { in: '12:30 PM', out: '8:00 PM',  inM: 12*60+30, outM: 20*60 },
   'Lois':      { in: '12:30 PM', out: '8:00 PM',  inM: 12*60+30, outM: 20*60 },
   'Marco':     { in: '7:30 AM',  out: '3:00 PM',  inM: 7*60+30,  outM: 15*60 },
   'Christine': { in: '4:30 AM',  out: '12:00 PM', inM: 4*60+30,  outM: 12*60 },
 };
-const ALL_PROCESSORS = ['Kassandra','Lydia','Tochukwu','Joshua','Pearl','Enomfon','Lois','Marco','Christine'];
+const ALL_PROCESSORS = ['Kassandra','Lydia','Tochukwu','Joshua','Enomfon','Lois','Marco','Christine'];
 const PRIORITY_DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday'];
 const PRIORITY_MEMBERS = ['Joshua','Christine'];
 const PROC_COLORS = {
@@ -181,14 +180,12 @@ const PROC_COLORS = {
   'Lydia':     {bg:'#D9EAD3',color:'#2D6010'},
   'Tochukwu':  {bg:'#CFE2F3',color:'#0C447C'},
   'Joshua':    {bg:'#EAD1DC',color:'#72243E'},
-  'Pearl':     {bg:'#E8D5F5',color:'#5B2D8C'},
   'Enomfon':   {bg:'#D5EEF5',color:'#0A5C72'},
   'Lois':      {bg:'#F5E6D5',color:'#7A4A10'},
   'Marco':     {bg:'#D5F5E3',color:'#1A6B3C'},
   'Christine': {bg:'#F5D5D5',color:'#8C1A1A'},
 };
 
-// ── Chicago time helpers ──────────────────────────────────────────
 function nowChicago() {
   return new Date(new Date().toLocaleString('en-US', { timeZone: TZ }));
 }
@@ -203,10 +200,6 @@ function getChicagoMinutes() {
 function formatChicagoTime(date) {
   return new Date(date).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: true });
 }
-function formatChicagoDateTime(date) {
-  return new Date(date).toLocaleString('en-US', { timeZone: TZ, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
-}
-// Convert UTC time string "HH:MM" to Chicago time string "h:MM AM/PM"
 function utcTimeToChicago(utcTimeStr) {
   if (!utcTimeStr) return '';
   const today = getTodayKey();
@@ -225,7 +218,6 @@ function formatDateLabel(dateStr) {
   if (dateStr === yesterdayStr) return `Yesterday (${dateStr})`;
   return dateStr;
 }
-// ─────────────────────────────────────────────────────────────────
 
 function isOnShift(proc) {
   const shift = SHIFTS[proc];
@@ -725,7 +717,6 @@ function exportCSV() {
   a.click();
 }
 
-// Init — show Chicago date/time
 const chicagoNow = nowChicago();
 document.getElementById('date-label').textContent = chicagoNow.toLocaleDateString('en-US', { timeZone: TZ, weekday:'long', year:'numeric', month:'long', day:'numeric' });
 renderScheduleBanner();
@@ -734,8 +725,6 @@ renderStats();
 updateTabCounts();
 renderTable();
 setStatus('loading', 'Loading sales data...');
-
-// Refresh schedule banner every minute to keep "currently on shift" accurate
 setInterval(renderScheduleBanner, 60000);
 
 loadAvailableDates().then(() => {
