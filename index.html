@@ -25,9 +25,11 @@
   .tabs{display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid #e8e8e6}
   .tab{padding:10px 20px;font-size:13px;font-weight:500;cursor:pointer;color:#888;border-bottom:2px solid transparent;margin-bottom:-2px;display:flex;align-items:center;gap:6px}
   .tab.active{color:#1D9E75;border-bottom-color:#1D9E75}
+  .tab.tab-unprocessable.active{color:#b91c1c;border-bottom-color:#b91c1c}
   .tab:hover{color:#1a1a1a}
   .tab-count{font-size:11px;background:#eee;color:#666;padding:1px 6px;border-radius:999px}
   .tab.active .tab-count{background:#e8f8f2;color:#1D9E75}
+  .tab.tab-unprocessable.active .tab-count{background:#fef2f2;color:#b91c1c}
   .card{background:#fff;border-radius:12px;border:1px solid #e8e8e6;padding:16px 20px;margin-bottom:16px}
   .card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px}
   .card-title{font-size:14px;font-weight:500}
@@ -49,6 +51,9 @@
   tr.done-row td{background:#f8f8f8;color:#aaa}
   tr.done-row:hover td{background:#f0f0ee!important}
   tr.done-row.row-selected td{background:#bfdbfe!important}
+  tr.unprocessable-row td{background:#fff8f8;color:#b91c1c}
+  tr.unprocessable-row:hover td{background:#fee2e2!important}
+  tr.unprocessable-row.row-selected td{background:#bfdbfe!important}
   @keyframes highlight{0%{background:#fffde7}100%{background:transparent}}
   .pill{display:inline-block;font-size:11px;font-weight:500;padding:2px 9px;border-radius:999px}
   .priority-pill{outline:2px solid #1D9E75;outline-offset:1px}
@@ -62,6 +67,7 @@
   .progress-bar{height:4px;background:#eee;border-radius:2px;margin-bottom:20px;overflow:hidden}
   .progress-fill{height:100%;background:#1D9E75;border-radius:2px;transition:width 1s linear}
   .done-badge{display:inline-block;font-size:10px;background:#e8f8f2;color:#1D9E75;padding:1px 6px;border-radius:4px;margin-left:4px}
+  .unprocessable-badge{display:inline-block;font-size:10px;background:#fef2f2;color:#b91c1c;padding:1px 6px;border-radius:4px;margin-left:4px}
   .schedule-info{background:#fff;border-radius:8px;border:1px solid #e8e8e6;padding:12px 16px;margin-bottom:16px;font-size:12px;color:#666;line-height:1.8}
   .schedule-info strong{color:#1a1a1a}
   .off-badge{font-size:10px;background:#fef3f2;color:#b91c1c;padding:1px 6px;border-radius:4px;margin-left:4px}
@@ -72,6 +78,8 @@
   .accept-btn:disabled{opacity:0.5;cursor:not-allowed}
   .done-btn{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:6px;border:1px solid #b91c1c;background:#fff;cursor:pointer;font-size:11px;font-weight:500;color:#b91c1c}
   .done-btn:hover{background:#fef2f2}
+  .unprocessable-btn{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:6px;border:1px solid #f59e0b;background:#fff;cursor:pointer;font-size:11px;font-weight:500;color:#b45309}
+  .unprocessable-btn:hover{background:#fffbeb}
   .restore-btn{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:6px;border:1px solid #ddd;background:#fff;cursor:pointer;font-size:11px;font-weight:500;color:#666}
   .restore-btn:hover{background:#f5f5f3}
   .new-badge{display:inline-block;font-size:10px;background:#fff3cd;color:#856404;padding:1px 6px;border-radius:4px;margin-left:4px;font-weight:500}
@@ -91,7 +99,7 @@
 </style>
 </head>
 <body>
-<div id="copy-toast" class="copy-toast">📋 Copied to clipboard</div>
+<div id="copy-toast" class="copy-toast">📋 Copied!</div>
 <div class="container">
   <div class="topbar">
     <div>
@@ -134,6 +142,9 @@
     <div class="tab" id="tab-processed" onclick="switchTab('processed')">
       <i class="ti ti-circle-check"></i> Processed <span class="tab-count" id="count-processed">0</span>
     </div>
+    <div class="tab tab-unprocessable" id="tab-unprocessable" onclick="switchTab('unprocessable')">
+      <i class="ti ti-circle-x"></i> Unprocessable <span class="tab-count" id="count-unprocessable">0</span>
+    </div>
   </div>
 
   <div class="card">
@@ -152,7 +163,7 @@
     <div style="overflow-x:auto">
       <table>
         <thead>
-          <tr>
+          <tr id="table-head">
             <th style="width:28px;text-align:center"><input type="checkbox" id="select-all" onchange="toggleSelectAll(this)" title="Select all"></th>
             <th style="width:28px">#</th>
             <th style="width:88px">Order</th>
@@ -161,7 +172,7 @@
             <th style="width:80px">Time (CT)</th>
             <th style="width:28px;text-align:center">Qty</th>
             <th style="width:96px">Processor</th>
-            <th style="width:90px;text-align:center">Action</th>
+            <th style="width:110px;text-align:center">Action</th>
           </tr>
         </thead>
         <tbody id="sales-body"></tbody>
@@ -241,14 +252,12 @@ function formatDateLabel(dateStr) {
   if (dateStr === yesterdayStr) return `Yesterday (${dateStr})`;
   return dateStr;
 }
-
 function isOnShift(proc) {
   const shift = SHIFTS[proc];
   if (!shift) return false;
   const m = getChicagoMinutes();
   return m >= shift.inM && m < shift.outM;
 }
-
 function getWorkingToday() {
   const day = getDayNameChicago();
   const m = getChicagoMinutes();
@@ -267,7 +276,6 @@ function getWorkingToday() {
     tomorrowName,
   };
 }
-
 function assignSalesClient(sales) {
   const { day, onShift, working, isAfter8PM, tomorrowName } = getWorkingToday();
   const activeWorkers = onShift.length > 0 ? onShift : working;
@@ -312,6 +320,7 @@ function assignSalesClient(sales) {
 let currentFilter = 'All';
 let activeSales = [];
 let processedSales = [];
+let unprocessableSales = [];
 let acceptedOrders = [];
 let newOrderIds = [];
 let selectedOrders = new Set();
@@ -326,14 +335,12 @@ function procStyle(proc) {
   const s = PROC_COLORS[proc] || {bg:'#eee',color:'#555'};
   return `background:${s.bg};color:${s.color}`;
 }
-
 function showSyncBanner(msg, duration=4000) {
   const el = document.getElementById('sync-banner');
   document.getElementById('sync-message').textContent = msg;
   el.style.display = 'flex';
   setTimeout(() => { el.style.display = 'none'; }, duration);
 }
-
 function showToast(msg) {
   const toast = document.getElementById('copy-toast');
   toast.textContent = msg;
@@ -341,12 +348,11 @@ function showToast(msg) {
   setTimeout(() => toast.classList.remove('show'), 2000);
 }
 
-// ── Selection logic ───────────────────────────────────────────────
+// ── Selection ─────────────────────────────────────────────────────
 function getVisibleSales() {
-  const sales = currentTab === 'active' ? activeSales : processedSales;
+  const sales = currentTab === 'active' ? activeSales : currentTab === 'processed' ? processedSales : unprocessableSales;
   return currentFilter === 'All' ? sales : sales.filter(r => r.proc === currentFilter);
 }
-
 function updateSelectionBar() {
   const bar = document.getElementById('selection-bar');
   const count = selectedOrders.size;
@@ -356,7 +362,6 @@ function updateSelectionBar() {
   } else {
     bar.classList.remove('visible');
   }
-  // Update select-all checkbox state
   const all = document.getElementById('select-all');
   if (all) {
     const visible = getVisibleSales();
@@ -364,7 +369,6 @@ function updateSelectionBar() {
     all.indeterminate = visible.some(s => selectedOrders.has(s.order)) && !all.checked;
   }
 }
-
 function toggleSelectAll(checkbox) {
   const visible = getVisibleSales();
   if (checkbox.checked) {
@@ -375,49 +379,32 @@ function toggleSelectAll(checkbox) {
   renderTable();
   updateSelectionBar();
 }
-
 function handleRowClick(order, index, event) {
-  // Ignore clicks on buttons
   if (event.target.tagName === 'BUTTON' || event.target.tagName === 'INPUT') return;
-
   const visible = getVisibleSales();
-
   if (event.shiftKey && lastClickedIndex >= 0) {
-    // Range select
     const start = Math.min(lastClickedIndex, index);
     const end = Math.max(lastClickedIndex, index);
     for (let i = start; i <= end; i++) {
       if (visible[i]) selectedOrders.add(visible[i].order);
     }
   } else if (event.ctrlKey || event.metaKey) {
-    // Toggle individual
-    if (selectedOrders.has(order)) {
-      selectedOrders.delete(order);
-    } else {
-      selectedOrders.add(order);
-    }
+    if (selectedOrders.has(order)) selectedOrders.delete(order);
+    else selectedOrders.add(order);
   } else {
-    // Single click — toggle this row, deselect others
-    if (selectedOrders.has(order) && selectedOrders.size === 1) {
-      selectedOrders.clear();
-    } else {
-      selectedOrders.clear();
-      selectedOrders.add(order);
-    }
+    if (selectedOrders.has(order) && selectedOrders.size === 1) selectedOrders.clear();
+    else { selectedOrders.clear(); selectedOrders.add(order); }
   }
-
   lastClickedIndex = index;
   renderTable();
   updateSelectionBar();
 }
-
 function clearSelection() {
   selectedOrders.clear();
   lastClickedIndex = -1;
   renderTable();
   updateSelectionBar();
 }
-
 function copySelectedOrders() {
   if (selectedOrders.size === 0) return;
   const orders = [...selectedOrders].join('\n');
@@ -433,12 +420,8 @@ function copySelectedOrders() {
     showToast(`📋 ${selectedOrders.size} order number${selectedOrders.size > 1 ? 's' : ''} copied!`);
   });
 }
-
-// Ctrl+C keyboard shortcut
 document.addEventListener('keydown', (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key === 'c' && selectedOrders.size > 0) {
-    copySelectedOrders();
-  }
+  if ((e.ctrlKey || e.metaKey) && e.key === 'c' && selectedOrders.size > 0) copySelectedOrders();
   if (e.key === 'Escape') clearSelection();
 });
 // ─────────────────────────────────────────────────────────────────
@@ -450,7 +433,10 @@ function switchTab(tab) {
   lastClickedIndex = -1;
   document.getElementById('tab-active').classList.toggle('active', tab === 'active');
   document.getElementById('tab-processed').classList.toggle('active', tab === 'processed');
-  document.getElementById('table-title').textContent = tab === 'active' ? 'Active sales' : 'Processed sales';
+  document.getElementById('tab-unprocessable').classList.toggle('active', tab === 'unprocessable');
+  document.getElementById('table-title').textContent =
+    tab === 'active' ? 'Active sales' :
+    tab === 'processed' ? 'Processed sales' : 'Unprocessable sales';
   renderFilters();
   renderTable();
   updateSelectionBar();
@@ -459,6 +445,7 @@ function switchTab(tab) {
 function updateTabCounts() {
   document.getElementById('count-active').textContent = activeSales.length;
   document.getElementById('count-processed').textContent = processedSales.length;
+  document.getElementById('count-unprocessable').textContent = unprocessableSales.length;
 }
 
 function renderScheduleBanner() {
@@ -490,14 +477,15 @@ function renderScheduleBanner() {
 }
 
 function renderStats() {
-  const total = activeSales.length + processedSales.length;
-  const tickets = [...activeSales, ...processedSales].reduce((a,r) => a + (r.qty||1), 0);
+  const total = activeSales.length + processedSales.length + unprocessableSales.length;
+  const tickets = [...activeSales, ...processedSales, ...unprocessableSales].reduce((a,r) => a + (r.qty||1), 0);
   const { onShift, working } = getWorkingToday();
   const activeWorkers = onShift.length > 0 ? onShift : working;
   let html = `
     <div class="stat"><div class="stat-label">Total orders</div><div class="stat-val">${total}</div></div>
     <div class="stat"><div class="stat-label">Total tickets</div><div class="stat-val">${tickets}</div></div>
     <div class="stat" style="border-left:3px solid #1D9E75"><div class="stat-label">Processed</div><div class="stat-val">${processedSales.length}</div></div>
+    <div class="stat" style="border-left:3px solid #b91c1c"><div class="stat-label">Unprocessable</div><div class="stat-val">${unprocessableSales.length}</div></div>
     <div class="stat" style="border-left:3px solid #BA7517"><div class="stat-label">Pending</div><div class="stat-val">${activeSales.length}</div></div>
   `;
   activeWorkers.forEach(p => {
@@ -511,7 +499,10 @@ function renderStats() {
 function renderFilters() {
   const { onShift, working } = getWorkingToday();
   const activeWorkers = onShift.length > 0 ? onShift : working;
-  const procs = currentTab === 'active' ? activeWorkers : [...new Set(processedSales.map(s => s.proc))];
+  let procs;
+  if (currentTab === 'active') procs = activeWorkers;
+  else if (currentTab === 'processed') procs = [...new Set(processedSales.map(s => s.proc))];
+  else procs = [...new Set(unprocessableSales.map(s => s.proc))];
   document.getElementById('filter-btns').innerHTML =
     ['All', ...procs].map(p =>
       `<button class="filter-btn${currentFilter===p?' active':''}" onclick="setFilter('${p}')">${p}</button>`
@@ -531,15 +522,16 @@ function renderTable() {
   const { onShift, working } = getWorkingToday();
   const priorityActive = PRIORITY_DAYS.includes(getDayNameChicago());
   const priorityWorkers = PRIORITY_MEMBERS.filter(p => (onShift.length > 0 ? onShift : working).includes(p));
-  const sales = currentTab === 'active' ? activeSales : processedSales;
+  const sales = currentTab === 'active' ? activeSales : currentTab === 'processed' ? processedSales : unprocessableSales;
   const data = currentFilter==='All' ? sales : sales.filter(r => r.proc===currentFilter);
   const tbody = document.getElementById('sales-body');
   if (!data.length) {
-    const msg = currentTab === 'active'
-      ? (isViewingToday ? 'No active sales — checking Gmail every 3 minutes' : 'No active sales for this date')
-      : 'No processed sales yet';
-    tbody.innerHTML=`<tr><td colspan="9" style="text-align:center;padding:24px;color:#aaa">${msg}</td></tr>`;
-    // Reset select-all
+    const msgs = {
+      active: isViewingToday ? 'No active sales — checking Gmail every 3 minutes' : 'No active sales for this date',
+      processed: 'No processed sales yet',
+      unprocessable: 'No unprocessable sales'
+    };
+    tbody.innerHTML=`<tr><td colspan="9" style="text-align:center;padding:24px;color:#aaa">${msgs[currentTab]}</td></tr>`;
     const sa = document.getElementById('select-all');
     if (sa) { sa.checked = false; sa.indeterminate = false; }
     return;
@@ -550,46 +542,57 @@ function renderTable() {
     const isPriority = priorityActive && priorityWorkers.includes(r.proc);
     const isSelected = selectedOrders.has(r.order);
     const ctTime = utcTimeToChicago(r.time);
-    const rowClass = [
-      'selectable',
-      isSelected ? 'row-selected' : '',
-      currentTab === 'processed' ? 'done-row' : (accepted ? 'accepted' : isNew ? 'new-sale' : '')
-    ].filter(Boolean).join(' ');
-
     const checkbox = `<input type="checkbox" ${isSelected ? 'checked' : ''} onclick="event.stopPropagation();handleRowClick('${r.order}', ${index}, event)" style="width:13px;height:13px;cursor:pointer;accent-color:#1D9E75">`;
 
-    if (currentTab === 'processed') {
-      return `<tr class="${rowClass}" onclick="handleRowClick('${r.order}', ${index}, event)">
-        <td style="text-align:center">${checkbox}</td>
-        <td style="color:#bbb">${index+1}</td>
-        <td style="font-family:monospace;font-size:12px">${r.order}</td>
-        <td title="${r.event||''}">${r.event||''} <span class="done-badge">done</span></td>
-        <td style="color:#aaa;font-size:12px">${r.event_date||''}</td>
-        <td style="color:#aaa">${ctTime}</td>
-        <td style="text-align:center;color:#aaa">${r.qty||1}</td>
-        <td><span class="pill" style="${procStyle(r.proc)}">${r.proc}</span></td>
-        <td style="text-align:center" onclick="event.stopPropagation()"><button class="restore-btn" onclick="restoreSale('${r.order}')">↩ Restore</button></td>
-      </tr>`;
+    let rowClass = 'selectable ';
+    if (isSelected) rowClass += 'row-selected ';
+    if (currentTab === 'processed') rowClass += 'done-row';
+    else if (currentTab === 'unprocessable') rowClass += 'unprocessable-row';
+    else if (accepted) rowClass += 'accepted';
+    else if (isNew) rowClass += 'new-sale';
+
+    // Action button based on tab
+    let actionBtn = '';
+    if (currentTab === 'active') {
+      if (accepted) {
+        actionBtn = `<button class="done-btn" onclick="markDone('${r.order}')">✓ Done</button>`;
+      } else {
+        actionBtn = `<button class="accept-btn" onclick="acceptSale('${r.order}')" id="accept-${r.order}">Accept</button>`;
+      }
+    } else if (currentTab === 'processed') {
+      actionBtn = `<button class="restore-btn" onclick="restoreSale('${r.order}', 'processed')">↩ Restore</button>`;
+    } else if (currentTab === 'unprocessable') {
+      actionBtn = `<button class="restore-btn" onclick="restoreSale('${r.order}', 'unprocessable')">↩ Restore</button>`;
     }
-    return `<tr class="${rowClass}" onclick="handleRowClick('${r.order}', ${index}, event)">
+
+    const eventBadge = currentTab === 'processed'
+      ? `<span class="done-badge">done</span>`
+      : currentTab === 'unprocessable'
+      ? `<span class="unprocessable-badge">unprocessable</span>`
+      : isNew ? `<span class="new-badge">NEW</span>` : '';
+
+    // For active tab, add unprocessable button after action
+    const unprocessableBtn = currentTab === 'active'
+      ? `<button class="unprocessable-btn" onclick="markUnprocessable('${r.order}')" title="Mark as unprocessable" style="margin-left:4px">✕</button>`
+      : '';
+
+    return `<tr class="${rowClass.trim()}" onclick="handleRowClick('${r.order}', ${index}, event)">
       <td style="text-align:center">${checkbox}</td>
-      <td style="color:#bbb">${r.n}</td>
+      <td style="color:#bbb">${index+1}</td>
       <td style="font-family:monospace;font-size:12px">${r.order}</td>
-      <td title="${r.event||''}">${r.event||''}${isNew?'<span class="new-badge">NEW</span>':''}</td>
+      <td title="${r.event||''}">${r.event||''} ${eventBadge}</td>
       <td style="color:#888;font-size:12px">${r.event_date||''}</td>
       <td style="color:#888">${ctTime}</td>
       <td style="text-align:center">${r.qty||1}</td>
       <td><span class="pill ${isPriority?'priority-pill':''}" style="${procStyle(r.proc)}">${r.proc}</span></td>
       <td style="text-align:center" onclick="event.stopPropagation()">
-        ${accepted
-          ? `<button class="done-btn" onclick="markDone('${r.order}')">✓ Done</button>`
-          : `<button class="accept-btn" onclick="acceptSale('${r.order}')" id="accept-${r.order}">Accept</button>`
-        }
+        <div style="display:flex;align-items:center;justify-content:center;gap:4px">
+          ${actionBtn}${unprocessableBtn}
+        </div>
       </td>
     </tr>`;
   }).join('');
 
-  // Update select-all state
   const sa = document.getElementById('select-all');
   if (sa) {
     sa.checked = data.length > 0 && data.every(s => selectedOrders.has(s.order));
@@ -630,7 +633,7 @@ async function saveToCloud() {
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({
         action: 'save_sales',
-        sales: { active: activeSales, processed: processedSales },
+        sales: { active: activeSales, processed: processedSales, unprocessable: unprocessableSales },
         date: currentDate
       }),
     });
@@ -653,10 +656,31 @@ async function markDone(order) {
   showSyncBanner('✓ Sale moved to Processed tab');
 }
 
-async function restoreSale(order) {
-  const sale = processedSales.find(s => s.order === order);
+async function markUnprocessable(order) {
+  const sale = activeSales.find(s => s.order === order);
   if (!sale) return;
-  processedSales = processedSales.filter(s => s.order !== order);
+  activeSales = activeSales.filter(s => s.order !== order);
+  activeSales = activeSales.map((s,i) => ({...s, n:i+1}));
+  unprocessableSales = [...unprocessableSales, {...sale, markedAt: new Date().toISOString()}];
+  acceptedOrders = acceptedOrders.filter(o => o !== order);
+  selectedOrders.delete(order);
+  updateTabCounts();
+  renderStats();
+  renderTable();
+  updateSelectionBar();
+  await saveToCloud();
+  showSyncBanner('⚠️ Sale moved to Unprocessable tab');
+}
+
+async function restoreSale(order, fromTab) {
+  const source = fromTab === 'processed' ? processedSales : unprocessableSales;
+  const sale = source.find(s => s.order === order);
+  if (!sale) return;
+  if (fromTab === 'processed') {
+    processedSales = processedSales.filter(s => s.order !== order);
+  } else {
+    unprocessableSales = unprocessableSales.filter(s => s.order !== order);
+  }
   activeSales = [...activeSales, {...sale}];
   activeSales = activeSales.map((s,i) => ({...s, n:i+1}));
   selectedOrders.delete(order);
@@ -688,6 +712,7 @@ async function clearTodaySales() {
   if (!confirm(`Clear all sales for ${formatDateLabel(currentDate)}? This affects all team members.`)) return;
   activeSales = [];
   processedSales = [];
+  unprocessableSales = [];
   acceptedOrders = [];
   newOrderIds = [];
   selectedOrders.clear();
@@ -730,6 +755,7 @@ async function switchDate(date) {
   isViewingToday = date === getTodayKey();
   activeSales = [];
   processedSales = [];
+  unprocessableSales = [];
   acceptedOrders = [];
   newOrderIds = [];
   selectedOrders.clear();
@@ -737,6 +763,7 @@ async function switchDate(date) {
   currentTab = 'active';
   document.getElementById('tab-active').classList.add('active');
   document.getElementById('tab-processed').classList.remove('active');
+  document.getElementById('tab-unprocessable').classList.remove('active');
   document.getElementById('table-title').textContent = 'Active sales';
 
   const badge = document.getElementById('viewing-badge');
@@ -761,15 +788,17 @@ async function switchDate(date) {
       if (Array.isArray(data.sales)) {
         activeSales = data.sales;
         processedSales = [];
+        unprocessableSales = [];
       } else {
         activeSales = data.sales.active || [];
         processedSales = data.sales.processed || [];
+        unprocessableSales = data.sales.unprocessable || [];
       }
       updateTabCounts();
       renderStats();
       renderFilters();
       renderTable();
-      setStatus('ok', `${activeSales.length} active · ${processedSales.length} processed`, isViewingToday ? 'Next check in 3m 00s' : '');
+      setStatus('ok', `${activeSales.length} active · ${processedSales.length} processed · ${unprocessableSales.length} unprocessable`, isViewingToday ? 'Next check in 3m 00s' : '');
       if (isViewingToday) startProgressBar();
     } else {
       updateTabCounts();
@@ -800,7 +829,7 @@ async function checkNewSales(manual=false) {
 
     if (data.success && data.sales) {
       const prevOrders = new Set(activeSales.map(s => s.order));
-      const processedOrders = new Set(processedSales.map(s => s.order));
+      const processedOrders = new Set([...processedSales, ...unprocessableSales].map(s => s.order));
       const incoming = Array.isArray(data.sales) ? data.sales : (data.sales.active || []);
       activeSales = incoming.filter(s => !processedOrders.has(s.order));
 
@@ -817,7 +846,7 @@ async function checkNewSales(manual=false) {
       renderScheduleBanner();
       renderTable();
       const now = formatChicagoTime(new Date());
-      setStatus('ok', `Last checked ${now} CT · ${activeSales.length} active · ${processedSales.length} processed`, 'Next check in 3m 00s');
+      setStatus('ok', `Last checked ${now} CT · ${activeSales.length} active · ${processedSales.length} processed · ${unprocessableSales.length} unprocessable`, 'Next check in 3m 00s');
       startProgressBar();
     } else if (data.error) {
       setStatus('warn', `Check failed: ${data.error}`);
@@ -869,6 +898,7 @@ function importCSV(event) {
       if (!rawSales.length) { alert('No sales found in CSV.'); return; }
       activeSales = assignSalesClient(rawSales);
       processedSales = [];
+      unprocessableSales = [];
       selectedOrders.clear();
       updateTabCounts();
       renderScheduleBanner();
@@ -893,7 +923,8 @@ function importCSV(event) {
 function exportCSV() {
   const all = [
     ...activeSales.map(r => ({...r, status:'Active'})),
-    ...processedSales.map(r => ({...r, status:'Processed'}))
+    ...processedSales.map(r => ({...r, status:'Processed'})),
+    ...unprocessableSales.map(r => ({...r, status:'Unprocessable'}))
   ];
   const headers = ['#','Order','Event','Event Date','Time (CT)','Qty','Processor','Status'];
   const rows = all.map((r,i) => [i+1, r.order, `"${r.event||''}"`, r.event_date||'', utcTimeToChicago(r.time), r.qty||1, r.proc, r.status]);
