@@ -127,19 +127,14 @@ function assignSales(newSales, existingSales, schedules, priorityDays, priorityM
     'Christine': { in: 4*60+30,  out: 12*60 },
   };
 
-  // After 8 PM (20:00) → assign to tomorrow's workers
   const isAfter8PM = currentMinutes >= 20 * 60;
-
   let activeWorkers;
 
   if (isAfter8PM) {
-    // Get tomorrow's scheduled workers sorted by clock-in time (earliest first)
     const tomorrowWorkers = allProcessors.filter(p => schedules[p].includes(tomorrowName));
-    // Sort by earliest clock-in time so first shift workers are prioritized
     tomorrowWorkers.sort((a, b) => (SHIFTS[a]?.in || 0) - (SHIFTS[b]?.in || 0));
     activeWorkers = tomorrowWorkers;
   } else {
-    // Normal logic — use current on-shift workers
     const todayWorkers = allProcessors.filter(p => schedules[p].includes(todayName));
     const onShift = todayWorkers.filter(p => isOnShift(p, currentMinutes));
     activeWorkers = onShift.length > 0 ? onShift : todayWorkers;
@@ -152,7 +147,6 @@ function assignSales(newSales, existingSales, schedules, priorityDays, priorityM
   const priorityWorkers = priorityMembers.filter(p => activeWorkers.includes(p));
   const otherWorkers = activeWorkers.filter(p => !priorityMembers.includes(p));
 
-  // Build workload counter
   const workload = {};
   activeWorkers.forEach(p => { workload[p] = 0; });
   existingSales.forEach(s => {
@@ -163,7 +157,6 @@ function assignSales(newSales, existingSales, schedules, priorityDays, priorityM
     return group.reduce((min, p) => workload[p] < workload[min] ? p : min, group[0]);
   }
 
-  // Same event → same processor
   const eventProcMap = {};
   existingSales.forEach(s => {
     if (s.event && s.proc) {
@@ -248,6 +241,7 @@ exports.handler = async function (event, context) {
     return { statusCode: 400, headers, body: JSON.stringify({ error: "Invalid JSON body" }) };
   }
 
+  // AUTO CHECK
   if (body.action === "check_new_sales") {
     try {
       const today = getTodayKey();
@@ -255,6 +249,7 @@ exports.handler = async function (event, context) {
       const existingData = await store.get(`sales-${today}`);
       let existingActive = [];
       let existingProcessed = [];
+      let existingUnprocessable = [];
       if (existingData) {
         const parsed = JSON.parse(existingData);
         if (Array.isArray(parsed)) {
@@ -262,6 +257,7 @@ exports.handler = async function (event, context) {
         } else {
           existingActive = parsed.active || [];
           existingProcessed = parsed.processed || [];
+          existingUnprocessable = parsed.unprocessable || [];
         }
       }
       const metaData = await store.get(`last-checked-${today}`);
@@ -270,22 +266,35 @@ exports.handler = async function (event, context) {
       const newSales = await fetchNewSales(gmailToken, lastChecked);
       await store.set(`last-checked-${today}`, JSON.stringify({ time: new Date().toISOString() }));
       if (newSales.length === 0) {
-        return { statusCode: 200, headers, body: JSON.stringify({ success: true, newCount: 0, sales: { active: existingActive, processed: existingProcessed } }) };
+        return {
+          statusCode: 200, headers,
+          body: JSON.stringify({ success: true, newCount: 0, sales: { active: existingActive, processed: existingProcessed, unprocessable: existingUnprocessable } })
+        };
       }
-      const existingOrders = new Set([...existingActive, ...existingProcessed].map(s => s.order));
+      const existingOrders = new Set([...existingActive, ...existingProcessed, ...existingUnprocessable].map(s => s.order));
       const brandNewSales = newSales.filter(s => !existingOrders.has(s.order));
       if (brandNewSales.length === 0) {
-        return { statusCode: 200, headers, body: JSON.stringify({ success: true, newCount: 0, sales: { active: existingActive, processed: existingProcessed } }) };
+        return {
+          statusCode: 200, headers,
+          body: JSON.stringify({ success: true, newCount: 0, sales: { active: existingActive, processed: existingProcessed, unprocessable: existingUnprocessable } })
+        };
       }
       const assignedNewSales = assignSales(brandNewSales, existingActive, SCHEDULES, PRIORITY_DAYS, PRIORITY_MEMBERS);
       const allActive = [...existingActive, ...assignedNewSales].map((s, i) => ({ ...s, n: i + 1 }));
-      await store.set(`sales-${today}`, JSON.stringify({ active: allActive, processed: existingProcessed }));
-      return { statusCode: 200, headers, body: JSON.stringify({ success: true, newCount: brandNewSales.length, sales: { active: allActive, processed: existingProcessed } }) };
+      await store.set(`sales-${today}`, JSON.stringify({ active: allActive, processed: existingProcessed, unprocessable: existingUnprocessable }));
+      return {
+        statusCode: 200, headers,
+        body: JSON.stringify({ success: true, newCount: brandNewSales.length, sales: { active: allActive, processed: existingProcessed, unprocessable: existingUnprocessable } })
+      };
     } catch (err) {
-      return { statusCode: 200, headers, body: JSON.stringify({ success: false, error: err.message, sales: { active: [], processed: [] } }) };
+      return {
+        statusCode: 200, headers,
+        body: JSON.stringify({ success: false, error: err.message, sales: { active: [], processed: [], unprocessable: [] } })
+      };
     }
   }
 
+  // SAVE
   if (body.action === "save_sales") {
     try {
       const today = body.date || getTodayKey();
@@ -297,20 +306,30 @@ exports.handler = async function (event, context) {
     }
   }
 
+  // LOAD
   if (body.action === "load_sales") {
     try {
       const dateKey = body.date || getTodayKey();
       const store = getStore({ name: "sales-dashboard", siteID, token: netlifyToken });
       const data = await store.get(`sales-${dateKey}`);
-      if (!data) return { statusCode: 200, headers, body: JSON.stringify({ success: true, sales: { active: [], processed: [] }, empty: true }) };
+      if (!data) return {
+        statusCode: 200, headers,
+        body: JSON.stringify({ success: true, sales: { active: [], processed: [], unprocessable: [] }, empty: true })
+      };
       const parsed = JSON.parse(data);
-      const sales = Array.isArray(parsed) ? { active: parsed, processed: [] } : parsed;
+      const sales = Array.isArray(parsed)
+        ? { active: parsed, processed: [], unprocessable: [] }
+        : { active: parsed.active || [], processed: parsed.processed || [], unprocessable: parsed.unprocessable || [] };
       return { statusCode: 200, headers, body: JSON.stringify({ success: true, sales, date: dateKey }) };
     } catch (err) {
-      return { statusCode: 200, headers, body: JSON.stringify({ success: false, error: err.message, sales: { active: [], processed: [] } }) };
+      return {
+        statusCode: 200, headers,
+        body: JSON.stringify({ success: false, error: err.message, sales: { active: [], processed: [], unprocessable: [] } })
+      };
     }
   }
 
+  // LIST DATES
   if (body.action === "list_dates") {
     try {
       const store = getStore({ name: "sales-dashboard", siteID, token: netlifyToken });
@@ -325,6 +344,7 @@ exports.handler = async function (event, context) {
     }
   }
 
+  // CLEAR
   if (body.action === "clear_sales") {
     try {
       const today = body.date || getTodayKey();
@@ -337,10 +357,12 @@ exports.handler = async function (event, context) {
     }
   }
 
+  // READ EMAIL
   if (body.action === "read_email") {
     return { statusCode: 200, headers, body: JSON.stringify({ success: true, message: `Order ${body.order} accepted.` }) };
   }
 
+  // DEBUG
   if (body.action === "debug_email") {
     try {
       const gmailToken = await getGmailToken();
@@ -357,12 +379,16 @@ exports.handler = async function (event, context) {
       );
       const msg = await msgRes.json();
       const snippet = (msg.snippet || '').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
-      return { statusCode: 200, headers, body: JSON.stringify({ snippet, extractedDate: extractEventDate(snippet), subject: msg.payload?.headers?.find(h => h.name === 'Subject')?.value }) };
+      return {
+        statusCode: 200, headers,
+        body: JSON.stringify({ snippet, extractedDate: extractEventDate(snippet), subject: msg.payload?.headers?.find(h => h.name === 'Subject')?.value })
+      };
     } catch(err) {
       return { statusCode: 200, headers, body: JSON.stringify({ error: err.message }) };
     }
   }
 
+  // DEFAULT: Anthropic API
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return { statusCode: 500, headers, body: JSON.stringify({ error: "ANTHROPIC_API_KEY not configured" }) };
 
