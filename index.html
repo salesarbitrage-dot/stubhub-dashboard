@@ -163,7 +163,7 @@
     <div style="overflow-x:auto">
       <table>
         <thead>
-          <tr id="table-head">
+          <tr>
             <th style="width:28px;text-align:center"><input type="checkbox" id="select-all" onchange="toggleSelectAll(this)" title="Select all"></th>
             <th style="width:28px">#</th>
             <th style="width:88px">Order</th>
@@ -172,7 +172,7 @@
             <th style="width:80px">Time (CT)</th>
             <th style="width:28px;text-align:center">Qty</th>
             <th style="width:96px">Processor</th>
-            <th style="width:110px;text-align:center">Action</th>
+            <th style="width:140px;text-align:center">Action</th>
           </tr>
         </thead>
         <tbody id="sales-body"></tbody>
@@ -265,17 +265,22 @@ function getWorkingToday() {
   const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
   const chicago = nowChicago();
   const tomorrowName = days[(chicago.getDay() + 1) % 7];
+  // ALL workers scheduled today — used for filters and stats
+  const working = ALL_PROCESSORS.filter(p => SCHEDULES[p].includes(day));
+  // Workers currently on shift — used for assignment only
+  const onShift = isAfter8PM
+    ? ALL_PROCESSORS.filter(p => SCHEDULES[p].includes(tomorrowName))
+    : ALL_PROCESSORS.filter(p => SCHEDULES[p].includes(day) && isOnShift(p));
   return {
     day,
-    working: ALL_PROCESSORS.filter(p => SCHEDULES[p].includes(day)),
-    onShift: isAfter8PM
-      ? ALL_PROCESSORS.filter(p => SCHEDULES[p].includes(tomorrowName))
-      : ALL_PROCESSORS.filter(p => SCHEDULES[p].includes(day) && isOnShift(p)),
+    working,   // all scheduled today — always shown in filters
+    onShift,   // currently on shift — used for assignments
     off: ALL_PROCESSORS.filter(p => !SCHEDULES[p].includes(day)),
     isAfter8PM,
     tomorrowName,
   };
 }
+
 function assignSalesClient(sales) {
   const { day, onShift, working, isAfter8PM, tomorrowName } = getWorkingToday();
   const activeWorkers = onShift.length > 0 ? onShift : working;
@@ -371,11 +376,8 @@ function updateSelectionBar() {
 }
 function toggleSelectAll(checkbox) {
   const visible = getVisibleSales();
-  if (checkbox.checked) {
-    visible.forEach(s => selectedOrders.add(s.order));
-  } else {
-    visible.forEach(s => selectedOrders.delete(s.order));
-  }
+  if (checkbox.checked) visible.forEach(s => selectedOrders.add(s.order));
+  else visible.forEach(s => selectedOrders.delete(s.order));
   renderTable();
   updateSelectionBar();
 }
@@ -479,8 +481,8 @@ function renderScheduleBanner() {
 function renderStats() {
   const total = activeSales.length + processedSales.length + unprocessableSales.length;
   const tickets = [...activeSales, ...processedSales, ...unprocessableSales].reduce((a,r) => a + (r.qty||1), 0);
-  const { onShift, working } = getWorkingToday();
-  const activeWorkers = onShift.length > 0 ? onShift : working;
+  // Always use ALL workers scheduled today for stats — not just on-shift
+  const { working } = getWorkingToday();
   let html = `
     <div class="stat"><div class="stat-label">Total orders</div><div class="stat-val">${total}</div></div>
     <div class="stat"><div class="stat-label">Total tickets</div><div class="stat-val">${tickets}</div></div>
@@ -488,7 +490,7 @@ function renderStats() {
     <div class="stat" style="border-left:3px solid #b91c1c"><div class="stat-label">Unprocessable</div><div class="stat-val">${unprocessableSales.length}</div></div>
     <div class="stat" style="border-left:3px solid #BA7517"><div class="stat-label">Pending</div><div class="stat-val">${activeSales.length}</div></div>
   `;
-  activeWorkers.forEach(p => {
+  working.forEach(p => {
     const n = activeSales.filter(r => r.proc === p).length;
     const s = PROC_COLORS[p] || {bg:'#eee'};
     html += `<div class="stat" style="border-left:3px solid ${s.bg}"><div class="stat-label">${p}</div><div class="stat-val">${n}</div></div>`;
@@ -497,10 +499,10 @@ function renderStats() {
 }
 
 function renderFilters() {
-  const { onShift, working } = getWorkingToday();
-  const activeWorkers = onShift.length > 0 ? onShift : working;
+  // Always show ALL workers scheduled today — not just on-shift
+  const { working } = getWorkingToday();
   let procs;
-  if (currentTab === 'active') procs = activeWorkers;
+  if (currentTab === 'active') procs = working;
   else if (currentTab === 'processed') procs = [...new Set(processedSales.map(s => s.proc))];
   else procs = [...new Set(unprocessableSales.map(s => s.proc))];
   document.getElementById('filter-btns').innerHTML =
@@ -519,9 +521,9 @@ function setFilter(p) {
 }
 
 function renderTable() {
-  const { onShift, working } = getWorkingToday();
+  const { working } = getWorkingToday();
   const priorityActive = PRIORITY_DAYS.includes(getDayNameChicago());
-  const priorityWorkers = PRIORITY_MEMBERS.filter(p => (onShift.length > 0 ? onShift : working).includes(p));
+  const priorityWorkers = PRIORITY_MEMBERS.filter(p => working.includes(p));
   const sales = currentTab === 'active' ? activeSales : currentTab === 'processed' ? processedSales : unprocessableSales;
   const data = currentFilter==='All' ? sales : sales.filter(r => r.proc===currentFilter);
   const tbody = document.getElementById('sales-body');
@@ -551,18 +553,17 @@ function renderTable() {
     else if (accepted) rowClass += 'accepted';
     else if (isNew) rowClass += 'new-sale';
 
-    // Action button based on tab
     let actionBtn = '';
     if (currentTab === 'active') {
       if (accepted) {
-        actionBtn = `<button class="done-btn" onclick="markDone('${r.order}')">✓ Done</button>`;
+        actionBtn = `<button class="done-btn" onclick="markDone('${r.order}')">✓ Done</button>
+                     <button class="unprocessable-btn" onclick="markUnprocessable('${r.order}')">✕ Unprocessable</button>`;
       } else {
-        actionBtn = `<button class="accept-btn" onclick="acceptSale('${r.order}')" id="accept-${r.order}">Accept</button>`;
+        actionBtn = `<button class="accept-btn" onclick="acceptSale('${r.order}')" id="accept-${r.order}">Accept</button>
+                     <button class="unprocessable-btn" onclick="markUnprocessable('${r.order}')">✕ Unprocessable</button>`;
       }
-    } else if (currentTab === 'processed') {
-      actionBtn = `<button class="restore-btn" onclick="restoreSale('${r.order}', 'processed')">↩ Restore</button>`;
-    } else if (currentTab === 'unprocessable') {
-      actionBtn = `<button class="restore-btn" onclick="restoreSale('${r.order}', 'unprocessable')">↩ Restore</button>`;
+    } else {
+      actionBtn = `<button class="restore-btn" onclick="restoreSale('${r.order}', '${currentTab}')">↩ Restore</button>`;
     }
 
     const eventBadge = currentTab === 'processed'
@@ -570,11 +571,6 @@ function renderTable() {
       : currentTab === 'unprocessable'
       ? `<span class="unprocessable-badge">unprocessable</span>`
       : isNew ? `<span class="new-badge">NEW</span>` : '';
-
-    // For active tab, add unprocessable button after action
-    const unprocessableBtn = currentTab === 'active'
-      ? `<button class="unprocessable-btn" onclick="markUnprocessable('${r.order}')" title="Mark as unprocessable" style="margin-left:4px">✕</button>`
-      : '';
 
     return `<tr class="${rowClass.trim()}" onclick="handleRowClick('${r.order}', ${index}, event)">
       <td style="text-align:center">${checkbox}</td>
@@ -586,8 +582,8 @@ function renderTable() {
       <td style="text-align:center">${r.qty||1}</td>
       <td><span class="pill ${isPriority?'priority-pill':''}" style="${procStyle(r.proc)}">${r.proc}</span></td>
       <td style="text-align:center" onclick="event.stopPropagation()">
-        <div style="display:flex;align-items:center;justify-content:center;gap:4px">
-          ${actionBtn}${unprocessableBtn}
+        <div style="display:flex;align-items:center;justify-content:center;gap:4px;flex-wrap:wrap">
+          ${actionBtn}
         </div>
       </td>
     </tr>`;
@@ -676,11 +672,8 @@ async function restoreSale(order, fromTab) {
   const source = fromTab === 'processed' ? processedSales : unprocessableSales;
   const sale = source.find(s => s.order === order);
   if (!sale) return;
-  if (fromTab === 'processed') {
-    processedSales = processedSales.filter(s => s.order !== order);
-  } else {
-    unprocessableSales = unprocessableSales.filter(s => s.order !== order);
-  }
+  if (fromTab === 'processed') processedSales = processedSales.filter(s => s.order !== order);
+  else unprocessableSales = unprocessableSales.filter(s => s.order !== order);
   activeSales = [...activeSales, {...sale}];
   activeSales = activeSales.map((s,i) => ({...s, n:i+1}));
   selectedOrders.delete(order);
@@ -829,9 +822,9 @@ async function checkNewSales(manual=false) {
 
     if (data.success && data.sales) {
       const prevOrders = new Set(activeSales.map(s => s.order));
-      const processedOrders = new Set([...processedSales, ...unprocessableSales].map(s => s.order));
+      const doneOrders = new Set([...processedSales, ...unprocessableSales].map(s => s.order));
       const incoming = Array.isArray(data.sales) ? data.sales : (data.sales.active || []);
-      activeSales = incoming.filter(s => !processedOrders.has(s.order));
+      activeSales = incoming.filter(s => !doneOrders.has(s.order));
 
       if (data.newCount > 0) {
         newOrderIds = activeSales.filter(s => !prevOrders.has(s.order)).map(s => s.order);
