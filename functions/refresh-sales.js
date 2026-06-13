@@ -38,10 +38,17 @@ function extractEventDate(text) {
   return '';
 }
 
-function isOnShift(processor) {
+function getChicagoInfo() {
   const now = new Date();
   const chicago = new Date(now.toLocaleString('en-US', { timeZone: 'America/Chicago' }));
+  const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
   const currentMinutes = chicago.getHours() * 60 + chicago.getMinutes();
+  const todayName = days[chicago.getDay()];
+  const tomorrowName = days[(chicago.getDay() + 1) % 7];
+  return { currentMinutes, todayName, tomorrowName };
+}
+
+function isOnShift(processor, currentMinutes) {
   const SHIFTS = {
     'Kassandra': { in: 7*60+30,  out: 15*60 },
     'Lydia':     { in: 4*60+30,  out: 12*60 },
@@ -106,20 +113,46 @@ async function fetchNewSales(token, lastChecked) {
 }
 
 function assignSales(newSales, existingSales, schedules, priorityDays, priorityMembers) {
-  const now = new Date();
-  const chicago = new Date(now.toLocaleString('en-US', { timeZone: 'America/Chicago' }));
-  const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-  const day = days[chicago.getDay()];
+  const { currentMinutes, todayName, tomorrowName } = getChicagoInfo();
   const allProcessors = ['Kassandra','Lydia','Tochukwu','Joshua','Enomfon','Lois','Marco','Christine'];
-  const working = allProcessors.filter(p => schedules[p].includes(day));
-  const onShift = working.filter(p => isOnShift(p));
-  const activeWorkers = onShift.length > 0 ? onShift : working;
+
+  const SHIFTS = {
+    'Kassandra': { in: 7*60+30,  out: 15*60 },
+    'Lydia':     { in: 4*60+30,  out: 12*60 },
+    'Tochukwu':  { in: 9*60+30,  out: 17*60 },
+    'Joshua':    { in: 4*60+30,  out: 12*60 },
+    'Enomfon':   { in: 12*60+30, out: 20*60 },
+    'Lois':      { in: 12*60+30, out: 20*60 },
+    'Marco':     { in: 7*60+30,  out: 15*60 },
+    'Christine': { in: 4*60+30,  out: 12*60 },
+  };
+
+  // After 8 PM (20:00) → assign to tomorrow's workers
+  const isAfter8PM = currentMinutes >= 20 * 60;
+
+  let activeWorkers;
+
+  if (isAfter8PM) {
+    // Get tomorrow's scheduled workers sorted by clock-in time (earliest first)
+    const tomorrowWorkers = allProcessors.filter(p => schedules[p].includes(tomorrowName));
+    // Sort by earliest clock-in time so first shift workers are prioritized
+    tomorrowWorkers.sort((a, b) => (SHIFTS[a]?.in || 0) - (SHIFTS[b]?.in || 0));
+    activeWorkers = tomorrowWorkers;
+  } else {
+    // Normal logic — use current on-shift workers
+    const todayWorkers = allProcessors.filter(p => schedules[p].includes(todayName));
+    const onShift = todayWorkers.filter(p => isOnShift(p, currentMinutes));
+    activeWorkers = onShift.length > 0 ? onShift : todayWorkers;
+  }
+
   if (!activeWorkers.length) return newSales.map((s) => ({ ...s, proc: 'Unassigned' }));
 
+  const day = isAfter8PM ? tomorrowName : todayName;
   const priorityActive = priorityDays.includes(day);
   const priorityWorkers = priorityMembers.filter(p => activeWorkers.includes(p));
   const otherWorkers = activeWorkers.filter(p => !priorityMembers.includes(p));
 
+  // Build workload counter
   const workload = {};
   activeWorkers.forEach(p => { workload[p] = 0; });
   existingSales.forEach(s => {
@@ -130,6 +163,7 @@ function assignSales(newSales, existingSales, schedules, priorityDays, priorityM
     return group.reduce((min, p) => workload[p] < workload[min] ? p : min, group[0]);
   }
 
+  // Same event → same processor
   const eventProcMap = {};
   existingSales.forEach(s => {
     if (s.event && s.proc) {
