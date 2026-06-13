@@ -35,13 +35,20 @@
   .filter-btn{background:#fff;border:1px solid #ddd;border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer;color:#666}
   .filter-btn.active{background:#e8f4fd;color:#1a6fa8;border-color:#a8d4f0}
   table{width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed}
-  th{font-size:11px;font-weight:500;color:#888;text-align:left;padding:6px 8px;border-bottom:1px solid #eee;white-space:nowrap}
-  td{padding:7px 8px;border-bottom:1px solid #f2f2f0;vertical-align:middle;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  th{font-size:11px;font-weight:500;color:#888;text-align:left;padding:6px 8px;border-bottom:1px solid #eee;white-space:nowrap;user-select:none}
+  td{padding:7px 8px;border-bottom:1px solid #f2f2f0;vertical-align:middle;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;user-select:none}
   tr:last-child td{border-bottom:none}
-  tr:hover td{background:#fafaf8}
+  tr.selectable{cursor:pointer}
+  tr.selectable:hover td{background:#f0f7ff!important}
+  tr.row-selected td{background:#dbeafe!important}
+  tr.row-selected:hover td{background:#bfdbfe!important}
   tr.accepted td{background:#f0faf6!important}
+  tr.accepted:hover td{background:#e4f5ee!important}
+  tr.accepted.row-selected td{background:#bfdbfe!important}
   tr.new-sale td{animation:highlight 3s ease-out}
   tr.done-row td{background:#f8f8f8;color:#aaa}
+  tr.done-row:hover td{background:#f0f0ee!important}
+  tr.done-row.row-selected td{background:#bfdbfe!important}
   @keyframes highlight{0%{background:#fffde7}100%{background:transparent}}
   .pill{display:inline-block;font-size:11px;font-weight:500;padding:2px 9px;border-radius:999px}
   .priority-pill{outline:2px solid #1D9E75;outline-offset:1px}
@@ -74,11 +81,17 @@
   .date-select{border:1px solid #ddd;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;color:#1a1a1a;background:#fff}
   .date-badge{display:inline-block;font-size:11px;background:#e8f4fd;color:#1a6fa8;padding:2px 8px;border-radius:4px;font-weight:500}
   .tz-badge{font-size:11px;background:#fff3cd;color:#856404;padding:2px 8px;border-radius:4px;margin-left:auto}
+  .selection-bar{display:none;align-items:center;gap:10px;background:#dbeafe;border-radius:8px;padding:8px 14px;margin-bottom:10px;font-size:12px;color:#1e40af}
+  .selection-bar.visible{display:flex}
+  .copy-toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1a1a1a;color:#fff;padding:8px 18px;border-radius:8px;font-size:12px;z-index:999;opacity:0;transition:opacity 0.3s;pointer-events:none}
+  .copy-toast.show{opacity:1}
+  .copy-hint{font-size:10px;color:#bbb;text-align:right;padding:4px 8px 0}
   #csv-input{display:none}
   @media(max-width:600px){body{padding:12px}.topbar{flex-direction:column;align-items:flex-start}}
 </style>
 </head>
 <body>
+<div id="copy-toast" class="copy-toast">📋 Copied to clipboard</div>
 <div class="container">
   <div class="topbar">
     <div>
@@ -128,10 +141,19 @@
       <span class="card-title" id="table-title">Active sales</span>
       <div class="filters" id="filter-btns"></div>
     </div>
+
+    <div id="selection-bar" class="selection-bar">
+      <i class="ti ti-copy" style="font-size:14px"></i>
+      <span id="selection-count">0 rows selected</span>
+      <button class="btn" style="padding:3px 10px;font-size:12px" onclick="copySelectedOrders()"><i class="ti ti-copy"></i> Copy order numbers</button>
+      <button class="btn" style="padding:3px 10px;font-size:12px;color:#888" onclick="clearSelection()">✕ Clear</button>
+    </div>
+
     <div style="overflow-x:auto">
       <table>
         <thead>
           <tr>
+            <th style="width:28px;text-align:center"><input type="checkbox" id="select-all" onchange="toggleSelectAll(this)" title="Select all"></th>
             <th style="width:28px">#</th>
             <th style="width:88px">Order</th>
             <th>Event</th>
@@ -145,8 +167,9 @@
         <tbody id="sales-body"></tbody>
       </table>
     </div>
+    <p class="copy-hint">💡 Click rows to select · Shift+click for range · Ctrl+C to copy order numbers</p>
   </div>
-  <p class="footer">Auto-checks Gmail every 3 minutes · All times in Chicago (CT) · Assignments based on shift times</p>
+  <p class="footer">Auto-checks Gmail every 3 minutes · All times in Chicago (CT) · Select rows to copy order numbers</p>
 </div>
 <script>
 const CHECK_INTERVAL_MS = 3 * 60 * 1000;
@@ -228,19 +251,29 @@ function isOnShift(proc) {
 
 function getWorkingToday() {
   const day = getDayNameChicago();
+  const m = getChicagoMinutes();
+  const isAfter8PM = m >= 20 * 60;
+  const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const chicago = nowChicago();
+  const tomorrowName = days[(chicago.getDay() + 1) % 7];
   return {
     day,
     working: ALL_PROCESSORS.filter(p => SCHEDULES[p].includes(day)),
-    onShift: ALL_PROCESSORS.filter(p => SCHEDULES[p].includes(day) && isOnShift(p)),
+    onShift: isAfter8PM
+      ? ALL_PROCESSORS.filter(p => SCHEDULES[p].includes(tomorrowName))
+      : ALL_PROCESSORS.filter(p => SCHEDULES[p].includes(day) && isOnShift(p)),
     off: ALL_PROCESSORS.filter(p => !SCHEDULES[p].includes(day)),
+    isAfter8PM,
+    tomorrowName,
   };
 }
 
 function assignSalesClient(sales) {
-  const { day, onShift, working } = getWorkingToday();
+  const { day, onShift, working, isAfter8PM, tomorrowName } = getWorkingToday();
   const activeWorkers = onShift.length > 0 ? onShift : working;
   if (!activeWorkers.length) return sales.map((s,i) => ({...s, n:i+1, proc:'Unassigned'}));
-  const priorityActive = PRIORITY_DAYS.includes(day);
+  const effectiveDay = isAfter8PM ? tomorrowName : day;
+  const priorityActive = PRIORITY_DAYS.includes(effectiveDay);
   const priorityWorkers = PRIORITY_MEMBERS.filter(p => activeWorkers.includes(p));
   const otherWorkers = activeWorkers.filter(p => !PRIORITY_MEMBERS.includes(p));
   const workload = {};
@@ -281,6 +314,8 @@ let activeSales = [];
 let processedSales = [];
 let acceptedOrders = [];
 let newOrderIds = [];
+let selectedOrders = new Set();
+let lastClickedIndex = -1;
 let currentDate = getTodayKey();
 let currentTab = 'active';
 let checkTimer = null;
@@ -299,14 +334,126 @@ function showSyncBanner(msg, duration=4000) {
   setTimeout(() => { el.style.display = 'none'; }, duration);
 }
 
+function showToast(msg) {
+  const toast = document.getElementById('copy-toast');
+  toast.textContent = msg;
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 2000);
+}
+
+// ── Selection logic ───────────────────────────────────────────────
+function getVisibleSales() {
+  const sales = currentTab === 'active' ? activeSales : processedSales;
+  return currentFilter === 'All' ? sales : sales.filter(r => r.proc === currentFilter);
+}
+
+function updateSelectionBar() {
+  const bar = document.getElementById('selection-bar');
+  const count = selectedOrders.size;
+  if (count > 0) {
+    bar.classList.add('visible');
+    document.getElementById('selection-count').textContent = `${count} row${count > 1 ? 's' : ''} selected`;
+  } else {
+    bar.classList.remove('visible');
+  }
+  // Update select-all checkbox state
+  const all = document.getElementById('select-all');
+  if (all) {
+    const visible = getVisibleSales();
+    all.checked = visible.length > 0 && visible.every(s => selectedOrders.has(s.order));
+    all.indeterminate = visible.some(s => selectedOrders.has(s.order)) && !all.checked;
+  }
+}
+
+function toggleSelectAll(checkbox) {
+  const visible = getVisibleSales();
+  if (checkbox.checked) {
+    visible.forEach(s => selectedOrders.add(s.order));
+  } else {
+    visible.forEach(s => selectedOrders.delete(s.order));
+  }
+  renderTable();
+  updateSelectionBar();
+}
+
+function handleRowClick(order, index, event) {
+  // Ignore clicks on buttons
+  if (event.target.tagName === 'BUTTON' || event.target.tagName === 'INPUT') return;
+
+  const visible = getVisibleSales();
+
+  if (event.shiftKey && lastClickedIndex >= 0) {
+    // Range select
+    const start = Math.min(lastClickedIndex, index);
+    const end = Math.max(lastClickedIndex, index);
+    for (let i = start; i <= end; i++) {
+      if (visible[i]) selectedOrders.add(visible[i].order);
+    }
+  } else if (event.ctrlKey || event.metaKey) {
+    // Toggle individual
+    if (selectedOrders.has(order)) {
+      selectedOrders.delete(order);
+    } else {
+      selectedOrders.add(order);
+    }
+  } else {
+    // Single click — toggle this row, deselect others
+    if (selectedOrders.has(order) && selectedOrders.size === 1) {
+      selectedOrders.clear();
+    } else {
+      selectedOrders.clear();
+      selectedOrders.add(order);
+    }
+  }
+
+  lastClickedIndex = index;
+  renderTable();
+  updateSelectionBar();
+}
+
+function clearSelection() {
+  selectedOrders.clear();
+  lastClickedIndex = -1;
+  renderTable();
+  updateSelectionBar();
+}
+
+function copySelectedOrders() {
+  if (selectedOrders.size === 0) return;
+  const orders = [...selectedOrders].join('\n');
+  navigator.clipboard.writeText(orders).then(() => {
+    showToast(`📋 ${selectedOrders.size} order number${selectedOrders.size > 1 ? 's' : ''} copied!`);
+  }).catch(() => {
+    const el = document.createElement('textarea');
+    el.value = orders;
+    document.body.appendChild(el);
+    el.select();
+    document.execCommand('copy');
+    document.body.removeChild(el);
+    showToast(`📋 ${selectedOrders.size} order number${selectedOrders.size > 1 ? 's' : ''} copied!`);
+  });
+}
+
+// Ctrl+C keyboard shortcut
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'c' && selectedOrders.size > 0) {
+    copySelectedOrders();
+  }
+  if (e.key === 'Escape') clearSelection();
+});
+// ─────────────────────────────────────────────────────────────────
+
 function switchTab(tab) {
   currentTab = tab;
   currentFilter = 'All';
+  selectedOrders.clear();
+  lastClickedIndex = -1;
   document.getElementById('tab-active').classList.toggle('active', tab === 'active');
   document.getElementById('tab-processed').classList.toggle('active', tab === 'processed');
   document.getElementById('table-title').textContent = tab === 'active' ? 'Active sales' : 'Processed sales';
   renderFilters();
   renderTable();
+  updateSelectionBar();
 }
 
 function updateTabCounts() {
@@ -315,7 +462,7 @@ function updateTabCounts() {
 }
 
 function renderScheduleBanner() {
-  const { day, working, onShift } = getWorkingToday();
+  const { day, working, onShift, isAfter8PM, tomorrowName } = getWorkingToday();
   const priorityActive = PRIORITY_DAYS.includes(day);
   const priorityWorkers = PRIORITY_MEMBERS.filter(p => onShift.includes(p));
   let html = `<strong>Today is ${day} · Chicago time: ${formatChicagoTime(new Date())}</strong><br>`;
@@ -329,7 +476,9 @@ function renderScheduleBanner() {
     </span>`;
   });
   html += `</div>`;
-  if (onShift.length > 0) {
+  if (isAfter8PM) {
+    html += `<div style="margin-top:6px;color:#7a4a10">🌙 After 8 PM — new sales assigned to <strong>${tomorrowName}</strong>'s team</div>`;
+  } else if (onShift.length > 0) {
     html += `<div style="margin-top:6px">🟢 Currently on shift: <strong>${onShift.join(', ')}</strong></div>`;
   } else {
     html += `<div style="margin-top:6px;color:#b91c1c">⚠️ No team members currently on shift</div>`;
@@ -369,7 +518,14 @@ function renderFilters() {
     ).join('');
 }
 
-function setFilter(p) { currentFilter=p; renderFilters(); renderTable(); }
+function setFilter(p) {
+  currentFilter = p;
+  selectedOrders.clear();
+  lastClickedIndex = -1;
+  renderFilters();
+  renderTable();
+  updateSelectionBar();
+}
 
 function renderTable() {
   const { onShift, working } = getWorkingToday();
@@ -382,27 +538,41 @@ function renderTable() {
     const msg = currentTab === 'active'
       ? (isViewingToday ? 'No active sales — checking Gmail every 3 minutes' : 'No active sales for this date')
       : 'No processed sales yet';
-    tbody.innerHTML=`<tr><td colspan="8" style="text-align:center;padding:24px;color:#aaa">${msg}</td></tr>`;
+    tbody.innerHTML=`<tr><td colspan="9" style="text-align:center;padding:24px;color:#aaa">${msg}</td></tr>`;
+    // Reset select-all
+    const sa = document.getElementById('select-all');
+    if (sa) { sa.checked = false; sa.indeterminate = false; }
     return;
   }
-  tbody.innerHTML = data.map((r,i) => {
+  tbody.innerHTML = data.map((r, index) => {
     const accepted = acceptedOrders.includes(r.order);
     const isNew = newOrderIds.includes(r.order);
     const isPriority = priorityActive && priorityWorkers.includes(r.proc);
+    const isSelected = selectedOrders.has(r.order);
     const ctTime = utcTimeToChicago(r.time);
+    const rowClass = [
+      'selectable',
+      isSelected ? 'row-selected' : '',
+      currentTab === 'processed' ? 'done-row' : (accepted ? 'accepted' : isNew ? 'new-sale' : '')
+    ].filter(Boolean).join(' ');
+
+    const checkbox = `<input type="checkbox" ${isSelected ? 'checked' : ''} onclick="event.stopPropagation();handleRowClick('${r.order}', ${index}, event)" style="width:13px;height:13px;cursor:pointer;accent-color:#1D9E75">`;
+
     if (currentTab === 'processed') {
-      return `<tr class="done-row">
-        <td style="color:#bbb">${i+1}</td>
+      return `<tr class="${rowClass}" onclick="handleRowClick('${r.order}', ${index}, event)">
+        <td style="text-align:center">${checkbox}</td>
+        <td style="color:#bbb">${index+1}</td>
         <td style="font-family:monospace;font-size:12px">${r.order}</td>
         <td title="${r.event||''}">${r.event||''} <span class="done-badge">done</span></td>
         <td style="color:#aaa;font-size:12px">${r.event_date||''}</td>
         <td style="color:#aaa">${ctTime}</td>
         <td style="text-align:center;color:#aaa">${r.qty||1}</td>
         <td><span class="pill" style="${procStyle(r.proc)}">${r.proc}</span></td>
-        <td style="text-align:center"><button class="restore-btn" onclick="restoreSale('${r.order}')">↩ Restore</button></td>
+        <td style="text-align:center" onclick="event.stopPropagation()"><button class="restore-btn" onclick="restoreSale('${r.order}')">↩ Restore</button></td>
       </tr>`;
     }
-    return `<tr class="${accepted?'accepted':isNew?'new-sale':''}">
+    return `<tr class="${rowClass}" onclick="handleRowClick('${r.order}', ${index}, event)">
+      <td style="text-align:center">${checkbox}</td>
       <td style="color:#bbb">${r.n}</td>
       <td style="font-family:monospace;font-size:12px">${r.order}</td>
       <td title="${r.event||''}">${r.event||''}${isNew?'<span class="new-badge">NEW</span>':''}</td>
@@ -410,7 +580,7 @@ function renderTable() {
       <td style="color:#888">${ctTime}</td>
       <td style="text-align:center">${r.qty||1}</td>
       <td><span class="pill ${isPriority?'priority-pill':''}" style="${procStyle(r.proc)}">${r.proc}</span></td>
-      <td style="text-align:center">
+      <td style="text-align:center" onclick="event.stopPropagation()">
         ${accepted
           ? `<button class="done-btn" onclick="markDone('${r.order}')">✓ Done</button>`
           : `<button class="accept-btn" onclick="acceptSale('${r.order}')" id="accept-${r.order}">Accept</button>`
@@ -418,6 +588,13 @@ function renderTable() {
       </td>
     </tr>`;
   }).join('');
+
+  // Update select-all state
+  const sa = document.getElementById('select-all');
+  if (sa) {
+    sa.checked = data.length > 0 && data.every(s => selectedOrders.has(s.order));
+    sa.indeterminate = data.some(s => selectedOrders.has(s.order)) && !sa.checked;
+  }
 }
 
 function setStatus(type, msg, sub) {
@@ -467,9 +644,11 @@ async function markDone(order) {
   activeSales = activeSales.map((s,i) => ({...s, n:i+1}));
   processedSales = [...processedSales, {...sale, doneAt: new Date().toISOString()}];
   acceptedOrders = acceptedOrders.filter(o => o !== order);
+  selectedOrders.delete(order);
   updateTabCounts();
   renderStats();
   renderTable();
+  updateSelectionBar();
   await saveToCloud();
   showSyncBanner('✓ Sale moved to Processed tab');
 }
@@ -480,9 +659,11 @@ async function restoreSale(order) {
   processedSales = processedSales.filter(s => s.order !== order);
   activeSales = [...activeSales, {...sale}];
   activeSales = activeSales.map((s,i) => ({...s, n:i+1}));
+  selectedOrders.delete(order);
   updateTabCounts();
   renderStats();
   renderTable();
+  updateSelectionBar();
   await saveToCloud();
   showSyncBanner('Sale restored to Active tab');
 }
@@ -509,9 +690,11 @@ async function clearTodaySales() {
   processedSales = [];
   acceptedOrders = [];
   newOrderIds = [];
+  selectedOrders.clear();
   updateTabCounts();
   renderStats();
   renderTable();
+  updateSelectionBar();
   try {
     await fetch('/.netlify/functions/refresh-sales', {
       method: 'POST',
@@ -549,6 +732,7 @@ async function switchDate(date) {
   processedSales = [];
   acceptedOrders = [];
   newOrderIds = [];
+  selectedOrders.clear();
   currentFilter = 'All';
   currentTab = 'active';
   document.getElementById('tab-active').classList.add('active');
@@ -564,6 +748,7 @@ async function switchDate(date) {
   updateTabCounts();
   renderFilters();
   renderTable();
+  updateSelectionBar();
 
   try {
     const res = await fetch('/.netlify/functions/refresh-sales', {
@@ -684,11 +869,13 @@ function importCSV(event) {
       if (!rawSales.length) { alert('No sales found in CSV.'); return; }
       activeSales = assignSalesClient(rawSales);
       processedSales = [];
+      selectedOrders.clear();
       updateTabCounts();
       renderScheduleBanner();
       renderStats();
       renderFilters();
       renderTable();
+      updateSelectionBar();
       setStatus('ok', `Imported ${activeSales.length} orders · Saving...`);
       event.target.value = '';
       await saveToCloud();
@@ -724,6 +911,7 @@ renderFilters();
 renderStats();
 updateTabCounts();
 renderTable();
+updateSelectionBar();
 setStatus('loading', 'Loading sales data...');
 setInterval(renderScheduleBanner, 60000);
 
