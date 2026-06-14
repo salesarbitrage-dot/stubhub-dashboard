@@ -265,20 +265,11 @@ function getWorkingToday() {
   const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
   const chicago = nowChicago();
   const tomorrowName = days[(chicago.getDay() + 1) % 7];
-  // ALL workers scheduled today — used for filters and stats
   const working = ALL_PROCESSORS.filter(p => SCHEDULES[p].includes(day));
-  // Workers currently on shift — used for assignment only
   const onShift = isAfter8PM
     ? ALL_PROCESSORS.filter(p => SCHEDULES[p].includes(tomorrowName))
     : ALL_PROCESSORS.filter(p => SCHEDULES[p].includes(day) && isOnShift(p));
-  return {
-    day,
-    working,   // all scheduled today — always shown in filters
-    onShift,   // currently on shift — used for assignments
-    off: ALL_PROCESSORS.filter(p => !SCHEDULES[p].includes(day)),
-    isAfter8PM,
-    tomorrowName,
-  };
+  return { day, working, onShift, off: ALL_PROCESSORS.filter(p => !SCHEDULES[p].includes(day)), isAfter8PM, tomorrowName };
 }
 
 function assignSalesClient(sales) {
@@ -481,8 +472,6 @@ function renderScheduleBanner() {
 function renderStats() {
   const total = activeSales.length + processedSales.length + unprocessableSales.length;
   const tickets = [...activeSales, ...processedSales, ...unprocessableSales].reduce((a,r) => a + (r.qty||1), 0);
-  // Always use ALL workers scheduled today for stats — not just on-shift
-  const { working } = getWorkingToday();
   let html = `
     <div class="stat"><div class="stat-label">Total orders</div><div class="stat-val">${total}</div></div>
     <div class="stat"><div class="stat-label">Total tickets</div><div class="stat-val">${tickets}</div></div>
@@ -490,7 +479,8 @@ function renderStats() {
     <div class="stat" style="border-left:3px solid #b91c1c"><div class="stat-label">Unprocessable</div><div class="stat-val">${unprocessableSales.length}</div></div>
     <div class="stat" style="border-left:3px solid #BA7517"><div class="stat-label">Pending</div><div class="stat-val">${activeSales.length}</div></div>
   `;
-  working.forEach(p => {
+  // Always show ALL processors in stats
+  ALL_PROCESSORS.forEach(p => {
     const n = activeSales.filter(r => r.proc === p).length;
     const s = PROC_COLORS[p] || {bg:'#eee'};
     html += `<div class="stat" style="border-left:3px solid ${s.bg}"><div class="stat-label">${p}</div><div class="stat-val">${n}</div></div>`;
@@ -499,10 +489,9 @@ function renderStats() {
 }
 
 function renderFilters() {
-  // Always show ALL workers scheduled today — not just on-shift
-  const { working } = getWorkingToday();
+  // Always show ALL processors in filter buttons
   let procs;
-  if (currentTab === 'active') procs = working;
+  if (currentTab === 'active') procs = ALL_PROCESSORS;
   else if (currentTab === 'processed') procs = [...new Set(processedSales.map(s => s.proc))];
   else procs = [...new Set(unprocessableSales.map(s => s.proc))];
   document.getElementById('filter-btns').innerHTML =
