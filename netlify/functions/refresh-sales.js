@@ -73,15 +73,25 @@ async function fetchNewSales(token, lastChecked) {
     : Math.floor(chicago.getTime() / 1000);
 
   const query = encodeURIComponent(`label:SOLD-STUBHUB-TICKETS after:${after}`);
-  const res = await fetch(
-    `https://gmail.googleapis.com/gmail/v1/users/me/threads?q=${query}&maxResults=50`,
-    { headers: { Authorization: `Bearer ${token}` } }
-  );
-  const data = await res.json();
-  if (!data.threads || data.threads.length === 0) return [];
+
+  // ── Paginate through ALL results — no 50 limit ──
+  const allThreads = [];
+  let pageToken = null;
+  do {
+    const url = `https://gmail.googleapis.com/gmail/v1/users/me/threads?q=${query}&maxResults=50${pageToken ? `&pageToken=${pageToken}` : ''}`;
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    const data = await res.json();
+    if (data.threads && data.threads.length > 0) {
+      allThreads.push(...data.threads);
+    }
+    pageToken = data.nextPageToken || null;
+  } while (pageToken);
+  // ────────────────────────────────────────────────
+
+  if (allThreads.length === 0) return [];
 
   const sales = [];
-  for (const thread of data.threads) {
+  for (const thread of allThreads) {
     const msgRes = await fetch(
       `https://gmail.googleapis.com/gmail/v1/users/me/messages/${thread.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=Date`,
       { headers: { Authorization: `Bearer ${token}` } }
@@ -273,14 +283,13 @@ exports.handler = async function (event, context) {
         };
       }
 
-      // ── KEY FIX: exclude ALL known orders — active, processed AND unprocessable ──
+      // Exclude ALL known orders — active, processed AND unprocessable
       const allKnownOrders = new Set([
         ...existingActive.map(s => s.order),
         ...existingProcessed.map(s => s.order),
         ...existingUnprocessable.map(s => s.order),
       ]);
       const brandNewSales = newSales.filter(s => !allKnownOrders.has(s.order));
-      // ────────────────────────────────────────────────────────────────────────────
 
       if (brandNewSales.length === 0) {
         return {
