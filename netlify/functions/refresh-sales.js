@@ -265,23 +265,34 @@ exports.handler = async function (event, context) {
       const gmailToken = await getGmailToken();
       const newSales = await fetchNewSales(gmailToken, lastChecked);
       await store.set(`last-checked-${today}`, JSON.stringify({ time: new Date().toISOString() }));
+
       if (newSales.length === 0) {
         return {
           statusCode: 200, headers,
           body: JSON.stringify({ success: true, newCount: 0, sales: { active: existingActive, processed: existingProcessed, unprocessable: existingUnprocessable } })
         };
       }
-      const existingOrders = new Set([...existingActive, ...existingProcessed, ...existingUnprocessable].map(s => s.order));
-      const brandNewSales = newSales.filter(s => !existingOrders.has(s.order));
+
+      // ── KEY FIX: exclude ALL known orders — active, processed AND unprocessable ──
+      const allKnownOrders = new Set([
+        ...existingActive.map(s => s.order),
+        ...existingProcessed.map(s => s.order),
+        ...existingUnprocessable.map(s => s.order),
+      ]);
+      const brandNewSales = newSales.filter(s => !allKnownOrders.has(s.order));
+      // ────────────────────────────────────────────────────────────────────────────
+
       if (brandNewSales.length === 0) {
         return {
           statusCode: 200, headers,
           body: JSON.stringify({ success: true, newCount: 0, sales: { active: existingActive, processed: existingProcessed, unprocessable: existingUnprocessable } })
         };
       }
+
       const assignedNewSales = assignSales(brandNewSales, existingActive, SCHEDULES, PRIORITY_DAYS, PRIORITY_MEMBERS);
       const allActive = [...existingActive, ...assignedNewSales].map((s, i) => ({ ...s, n: i + 1 }));
       await store.set(`sales-${today}`, JSON.stringify({ active: allActive, processed: existingProcessed, unprocessable: existingUnprocessable }));
+
       return {
         statusCode: 200, headers,
         body: JSON.stringify({ success: true, newCount: brandNewSales.length, sales: { active: allActive, processed: existingProcessed, unprocessable: existingUnprocessable } })
