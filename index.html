@@ -479,7 +479,6 @@ function renderStats() {
     <div class="stat" style="border-left:3px solid #b91c1c"><div class="stat-label">Unprocessable</div><div class="stat-val">${unprocessableSales.length}</div></div>
     <div class="stat" style="border-left:3px solid #BA7517"><div class="stat-label">Pending</div><div class="stat-val">${activeSales.length}</div></div>
   `;
-  // Always show ALL processors in stats
   ALL_PROCESSORS.forEach(p => {
     const n = activeSales.filter(r => r.proc === p).length;
     const s = PROC_COLORS[p] || {bg:'#eee'};
@@ -489,7 +488,6 @@ function renderStats() {
 }
 
 function renderFilters() {
-  // Always show ALL processors in filter buttons
   let procs;
   if (currentTab === 'active') procs = ALL_PROCESSORS;
   else if (currentTab === 'processed') procs = [...new Set(processedSales.map(s => s.proc))];
@@ -810,17 +808,21 @@ async function checkNewSales(manual=false) {
     const data = await res.json();
 
     if (data.success && data.sales) {
-      const prevOrders = new Set(activeSales.map(s => s.order));
+      // ── KEY FIX: never replace existing sales, only add new ones ──
+      const serverActive = Array.isArray(data.sales) ? data.sales : (data.sales.active || []);
+      const existingOrderMap = new Map(activeSales.map(s => [s.order, s]));
       const doneOrders = new Set([...processedSales, ...unprocessableSales].map(s => s.order));
-      const incoming = Array.isArray(data.sales) ? data.sales : (data.sales.active || []);
-      activeSales = incoming.filter(s => !doneOrders.has(s.order));
 
       if (data.newCount > 0) {
-        newOrderIds = activeSales.filter(s => !prevOrders.has(s.order)).map(s => s.order);
+        // Only add orders we don't already have
+        const brandNew = serverActive.filter(s => !existingOrderMap.has(s.order) && !doneOrders.has(s.order));
+        newOrderIds = brandNew.map(s => s.order);
+        activeSales = [...activeSales, ...brandNew].map((s,i) => ({...s, n:i+1}));
         setTimeout(() => { newOrderIds = []; renderTable(); }, 10000);
         showSyncBanner(`🎉 ${data.newCount} new sale${data.newCount > 1 ? 's' : ''} found and assigned!`);
         await loadAvailableDates();
       }
+      // ─────────────────────────────────────────────────────────────
 
       updateTabCounts();
       renderStats();
