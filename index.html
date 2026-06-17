@@ -635,7 +635,7 @@ async function markDone(order) {
   renderStats();
   renderTable();
   updateSelectionBar();
-  await saveToCloud();
+  await saveToCloud(); // ── saves all three lists to cloud immediately
   showSyncBanner('✓ Sale moved to Processed tab');
 }
 
@@ -651,7 +651,7 @@ async function markUnprocessable(order) {
   renderStats();
   renderTable();
   updateSelectionBar();
-  await saveToCloud();
+  await saveToCloud(); // ── saves all three lists to cloud immediately
   showSyncBanner('⚠️ Sale moved to Unprocessable tab');
 }
 
@@ -808,21 +808,59 @@ async function checkNewSales(manual=false) {
     const data = await res.json();
 
     if (data.success && data.sales) {
-      // ── KEY FIX: never replace existing sales, only add new ones ──
+      // ── KEY FIX: load server state for ALL three lists ──
       const serverActive = Array.isArray(data.sales) ? data.sales : (data.sales.active || []);
-      const existingOrderMap = new Map(activeSales.map(s => [s.order, s]));
-      const doneOrders = new Set([...processedSales, ...unprocessableSales].map(s => s.order));
+      const serverProcessed = Array.isArray(data.sales) ? [] : (data.sales.processed || []);
+      const serverUnprocessable = Array.isArray(data.sales) ? [] : (data.sales.unprocessable || []);
 
-      if (data.newCount > 0) {
-        // Only add orders we don't already have
-        const brandNew = serverActive.filter(s => !existingOrderMap.has(s.order) && !doneOrders.has(s.order));
+      // Build set of all orders that are done locally (processed or unprocessable)
+      const localDoneOrders = new Set([
+        ...processedSales.map(s => s.order),
+        ...unprocessableSales.map(s => s.order),
+      ]);
+
+      // Build set of all orders that are done on server
+      const serverDoneOrders = new Set([
+        ...serverProcessed.map(s => s.order),
+        ...serverUnprocessable.map(s => s.order),
+      ]);
+
+      // Merge processed: keep local + any from server not already local
+      const localProcessedOrders = new Set(processedSales.map(s => s.order));
+      const mergedProcessed = [
+        ...processedSales,
+        ...serverProcessed.filter(s => !localProcessedOrders.has(s.order))
+      ];
+
+      // Merge unprocessable: keep local + any from server not already local
+      const localUnprocessableOrders = new Set(unprocessableSales.map(s => s.order));
+      const mergedUnprocessable = [
+        ...unprocessableSales,
+        ...serverUnprocessable.filter(s => !localUnprocessableOrders.has(s.order))
+      ];
+
+      // All done orders (local + server)
+      const allDoneOrders = new Set([...localDoneOrders, ...serverDoneOrders]);
+
+      // For active: keep existing local active + add brand new from server
+      // NEVER re-add anything that is done locally or on server
+      const existingActiveOrders = new Set(activeSales.map(s => s.order));
+      const brandNew = serverActive.filter(s =>
+        !existingActiveOrders.has(s.order) && !allDoneOrders.has(s.order)
+      );
+
+      if (brandNew.length > 0) {
         newOrderIds = brandNew.map(s => s.order);
         activeSales = [...activeSales, ...brandNew].map((s,i) => ({...s, n:i+1}));
         setTimeout(() => { newOrderIds = []; renderTable(); }, 10000);
         showSyncBanner(`🎉 ${data.newCount} new sale${data.newCount > 1 ? 's' : ''} found and assigned!`);
         await loadAvailableDates();
       }
-      // ─────────────────────────────────────────────────────────────
+
+      // Update processed and unprocessable with merged state
+      processedSales = mergedProcessed;
+      unprocessableSales = mergedUnprocessable;
+      // ────────────────────────────────────────────────────
 
       updateTabCounts();
       renderStats();
