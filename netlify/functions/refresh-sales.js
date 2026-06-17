@@ -25,6 +25,7 @@ function extractEventDate(text) {
   const patterns = [
     /upload them by \w+,\s+(\d+\s+\w+\s+\d{4})/i,
     /transfer them by \w+,\s+(\d+\s+\w+\s+\d{4})/i,
+    /enter the barcodes by \w+,\s+(\d+\s+\w+\s+\d{4})/i,
     /by \w+,\s+(\d+\s+\w+\s+\d{4})/i,
     /(\d{1,2}\s+\w+\s+\d{4})/,
   ];
@@ -36,6 +37,24 @@ function extractEventDate(text) {
     }
   }
   return '';
+}
+
+function extractOrderFromSubject(subject) {
+  // Handle multiple subject formats:
+  // "Action Required - You sold X ticket(s) for PARKING PASSES ONLY Event - Order# XXXXXX"
+  // "You sold your ticket for PARKING PASSES ONLY Event - Order# XXXXXX"
+  // "You sold X ticket(s) for PARKING PASSES ONLY Event - Order# XXXXXX"
+  const orderMatch = subject.match(/Order#\s*(\d+)/i);
+  if (!orderMatch) return null;
+
+  const qtyMatch = subject.match(/sold\s+(\d+)\s+ticket/i) || subject.match(/sold\s+your\s+ticket/i);
+  const qty = qtyMatch && qtyMatch[1] ? parseInt(qtyMatch[1]) : 1;
+
+  // Extract event name — everything between "ONLY " and " - Order#"
+  const eventMatch = subject.match(/ONLY\s+(.+?)\s+-\s+Order#/i);
+  const event = eventMatch ? eventMatch[1].trim() : 'Unknown Event';
+
+  return { order: orderMatch[1], qty, event };
 }
 
 function getChicagoInfo() {
@@ -64,7 +83,7 @@ function isOnShift(processor, currentMinutes) {
   return currentMinutes >= shift.in && currentMinutes < shift.out;
 }
 
-async function fetchNewSales(token, lastChecked) {
+async function fetchNewSales(token, lastChecked, knownOrders) {
   const now = new Date();
   const chicago = new Date(now.toLocaleString('en-US', { timeZone: 'America/Chicago' }));
   chicago.setHours(0, 0, 0, 0);
@@ -74,7 +93,7 @@ async function fetchNewSales(token, lastChecked) {
 
   const query = encodeURIComponent(`label:SOLD-STUBHUB-TICKETS after:${after}`);
 
-  // Paginate through ALL results
+  // Step 1 — collect ALL thread IDs via pagination (lightweight, no body needed)
   const allThreads = [];
   let pageToken = null;
   do {
@@ -89,43 +108,44 @@ async function fetchNewSales(token, lastChecked) {
 
   if (allThreads.length === 0) return [];
 
-  const salesMap = new Map(); // ── keyed by order number to prevent duplicates
+  // Step 2 — fetch metadata for each thread, but SKIP known orders early
+  const salesMap = new Map();
 
-  for (const thread of allThreads) {
-    const msgRes = await fetch(
-      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${thread.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=Date`,
-      { headers: { Authorization: `Bearer ${token}` } }
+  // Process in batches of 10 to avoid overwhelming the function
+  const BATCH_SIZE = 10;
+  for (let i = 0; i < allThreads.length; i += BATCH_SIZE) {
+    const batch = allThreads.slice(i, i + BATCH_SIZE);
+    const batchResults = await Promise.all(
+      batch.map(thread =>
+        fetch(
+          `https://gmail.googleapis.com/gmail/v1/users/me/messages/${thread.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=Date`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        ).then(r => r.json())
+      )
     );
-    const msg = await msgRes.json();
-    const headers = msg.payload?.headers || [];
-    const subjectHeader = headers.find(h => h.name === 'Subject');
-    const dateHeader = headers.find(h => h.name === 'Date');
-    if (!subjectHeader) continue;
 
-    const subject = subjectHeader.value;
-    const orderMatch = subject.match(/Order#\s*(\d+)/i);
-    const qtyMatch = subject.match(/sold\s+(\d+)\s+ticket/i);
-    const eventMatch = subject.match(/ONLY\s+(.+?)\s+-\s+Order#/i);
-    if (!orderMatch) continue;
+    for (const msg of batchResults) {
+      const headers = msg.payload?.headers || [];
+      const subjectHeader = headers.find(h => h.name === 'Subject');
+      const dateHeader = headers.find(h => h.name === 'Date');
+      if (!subjectHeader) continue;
 
-    const orderNumber = orderMatch[1];
+      const subject = subjectHeader.value;
+      const parsed = extractOrderFromSubject(subject);
+      if (!parsed) continue;
 
-    // ── Skip if we already have this order number ──
-    if (salesMap.has(orderNumber)) continue;
+      const { order, qty, event } = parsed;
 
-    const snippet = (msg.snippet || '').replace(/&#39;/g, "'").replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ');
-    const date = dateHeader ? new Date(dateHeader.value) : new Date();
-    const timeUTC = date.toISOString().slice(11, 16);
-    const eventDate = extractEventDate(snippet);
+      // Skip if already known or already seen in this batch
+      if (knownOrders.has(order) || salesMap.has(order)) continue;
 
-    salesMap.set(orderNumber, {
-      order: orderNumber,
-      event: eventMatch ? eventMatch[1].trim() : 'Unknown Event',
-      event_date: eventDate,
-      time: timeUTC,
-      qty: qtyMatch ? parseInt(qtyMatch[1]) : 1,
-      proc: ''
-    });
+      const snippet = (msg.snippet || '').replace(/&#39;/g, "'").replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ');
+      const date = dateHeader ? new Date(dateHeader.value) : new Date();
+      const timeUTC = date.toISOString().slice(11, 16);
+      const eventDate = extractEventDate(snippet);
+
+      salesMap.set(order, { order, event, event_date: eventDate, time: timeUTC, qty, proc: '' });
+    }
   }
 
   return Array.from(salesMap.values());
@@ -282,7 +302,15 @@ exports.handler = async function (event, context) {
       const metaData = await store.get(`last-checked-${today}`);
       const lastChecked = metaData ? JSON.parse(metaData).time : null;
       const gmailToken = await getGmailToken();
-      const newSales = await fetchNewSales(gmailToken, lastChecked);
+
+      // Pass all known orders so we can skip them during fetch
+      const allKnownOrders = new Set([
+        ...existingActive.map(s => s.order),
+        ...existingProcessed.map(s => s.order),
+        ...existingUnprocessable.map(s => s.order),
+      ]);
+
+      const newSales = await fetchNewSales(gmailToken, lastChecked, allKnownOrders);
       await store.set(`last-checked-${today}`, JSON.stringify({ time: new Date().toISOString() }));
 
       if (newSales.length === 0) {
@@ -292,12 +320,7 @@ exports.handler = async function (event, context) {
         };
       }
 
-      // Exclude ALL known orders — active, processed AND unprocessable
-      const allKnownOrders = new Set([
-        ...existingActive.map(s => s.order),
-        ...existingProcessed.map(s => s.order),
-        ...existingUnprocessable.map(s => s.order),
-      ]);
+      // Double-check — filter out any known orders just in case
       const brandNewSales = newSales.filter(s => !allKnownOrders.has(s.order));
 
       if (brandNewSales.length === 0) {
