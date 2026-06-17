@@ -74,7 +74,7 @@ async function fetchNewSales(token, lastChecked) {
 
   const query = encodeURIComponent(`label:SOLD-STUBHUB-TICKETS after:${after}`);
 
-  // ── Paginate through ALL results — no 50 limit ──
+  // Paginate through ALL results
   const allThreads = [];
   let pageToken = null;
   do {
@@ -86,11 +86,11 @@ async function fetchNewSales(token, lastChecked) {
     }
     pageToken = data.nextPageToken || null;
   } while (pageToken);
-  // ────────────────────────────────────────────────
 
   if (allThreads.length === 0) return [];
 
-  const sales = [];
+  const salesMap = new Map(); // ── keyed by order number to prevent duplicates
+
   for (const thread of allThreads) {
     const msgRes = await fetch(
       `https://gmail.googleapis.com/gmail/v1/users/me/messages/${thread.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=Date`,
@@ -101,17 +101,25 @@ async function fetchNewSales(token, lastChecked) {
     const subjectHeader = headers.find(h => h.name === 'Subject');
     const dateHeader = headers.find(h => h.name === 'Date');
     if (!subjectHeader) continue;
+
     const subject = subjectHeader.value;
     const orderMatch = subject.match(/Order#\s*(\d+)/i);
     const qtyMatch = subject.match(/sold\s+(\d+)\s+ticket/i);
     const eventMatch = subject.match(/ONLY\s+(.+?)\s+-\s+Order#/i);
     if (!orderMatch) continue;
+
+    const orderNumber = orderMatch[1];
+
+    // ── Skip if we already have this order number ──
+    if (salesMap.has(orderNumber)) continue;
+
     const snippet = (msg.snippet || '').replace(/&#39;/g, "'").replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ');
     const date = dateHeader ? new Date(dateHeader.value) : new Date();
     const timeUTC = date.toISOString().slice(11, 16);
     const eventDate = extractEventDate(snippet);
-    sales.push({
-      order: orderMatch[1],
+
+    salesMap.set(orderNumber, {
+      order: orderNumber,
       event: eventMatch ? eventMatch[1].trim() : 'Unknown Event',
       event_date: eventDate,
       time: timeUTC,
@@ -119,7 +127,8 @@ async function fetchNewSales(token, lastChecked) {
       proc: ''
     });
   }
-  return sales;
+
+  return Array.from(salesMap.values());
 }
 
 function assignSales(newSales, existingSales, schedules, priorityDays, priorityMembers) {
